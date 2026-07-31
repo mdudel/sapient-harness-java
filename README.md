@@ -108,8 +108,48 @@ Three tabs:
 
 1. **Receivers** — add/start TCP servers, watch live incoming messages
    with per-message validation verdict.
-2. **Transmitters** — add/connect TCP clients, edit a JSON template, send.
+2. **Transmitters** — add/connect TCP clients, pick a message type
+   from the dropdown, click Send — a dialog collects the type-specific
+   fields (see below), then the message is dispatched. Or launch a
+   **Detection Generator** for scenario-scale traffic.
 3. **Log** — global application log (v0.2).
+
+### Message types
+
+All BSI Flex 335 v2 top-level messages can be sent from the UI:
+
+| Type | Notes |
+|---|---|
+| Registration | Simple form: node_type + name. Fills all mandatory arrays. |
+| RegistrationAck | Accept/reject + optional reason |
+| StatusReport | System state, mode, **lat/lon/alt**, power source/status, battery % |
+| **Detection Report (generator)** | Scheduled: N tracks around a center point at a configurable rate, with optional random-walk motion. See below. |
+| Task | Control (START/STOP/PAUSE) + task name + description |
+| TaskAck | Task ID + accept/reject + optional reason |
+| Alert | Type, status, priority, description, lat/lon/alt |
+| AlertAck | Alert ID + accept/reject + optional reason |
+| Error | Free-text error message |
+
+Default lat/lon: **Wiesbaden (50.0782, 8.2398)** — all fields editable.
+
+### Detection generator
+
+The Detection Report generator simulates a fleet of moving tracks:
+
+- **N tracks** placed randomly within a circle of R metres around a
+  configurable center point (defaults to Wiesbaden).
+- Sends one `DetectionReport` per track per tick, on a configurable
+  interval (default 1000 ms).
+- Each track has a stable `object_id` so consumers see continuous
+  tracks, not one-shot detections.
+- **Motion mode** (toggle): each tick, each track advances
+  `speed_m_s × (tick_ms / 1000)` metres in its current heading. Heading
+  wobbles randomly by ±turn-jitter° per tick (default 15°), giving
+  natural-looking random-walk-with-momentum movement.
+- Runaway tracks (>3× radius from center) are automatically nudged back
+  toward the center so nothing wanders off forever.
+- Running generators show a live activity indicator + stop icon in the
+  Activity column of the transmitter table.
 
 ### Icons
 
