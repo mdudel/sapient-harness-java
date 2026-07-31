@@ -46,6 +46,7 @@
         <jackson.version>2.18.0</jackson.version>
         <javafx.version>21.0.5</javafx.version>
         <atlantafx.version>2.0.1</atlantafx.version>
+        <ikonli.version>12.3.1</ikonli.version>
         <junit.version>5.11.3</junit.version>
         <assertj.version>3.26.3</assertj.version>
         <picocli.version>4.7.6</picocli.version>
@@ -145,6 +146,18 @@
                 <groupId>io.github.mkpaz</groupId>
                 <artifactId>atlantafx-base</artifactId>
                 <version>${atlantafx.version}</version>
+            </dependency>
+
+            <!-- Flat icon pack for JavaFX (Feather icon set) -->
+            <dependency>
+                <groupId>org.kordamp.ikonli</groupId>
+                <artifactId>ikonli-javafx</artifactId>
+                <version>${ikonli.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.kordamp.ikonli</groupId>
+                <artifactId>ikonli-feather-pack</artifactId>
+                <version>${ikonli.version}</version>
             </dependency>
 
             <!-- Test -->

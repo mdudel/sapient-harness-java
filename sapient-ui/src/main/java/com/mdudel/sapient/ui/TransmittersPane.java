@@ -14,6 +14,7 @@ import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
@@ -22,6 +23,7 @@ import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import org.kordamp.ikonli.feather.Feather;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.Registration;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.SapientMessage;
 
@@ -55,10 +57,10 @@ public final class TransmittersPane extends BorderPane {
         hostField.setPromptText("Host (e.g. 10.0.0.20)");
         TextField portField = new TextField();
         portField.setPromptText("Port (e.g. 14000)");
-        Button addBtn = new Button("Add");
-        Button connectBtn = new Button("Connect");
-        Button disconnectBtn = new Button("Disconnect");
-        Button removeBtn = new Button("Remove");
+        Button addBtn = Icons.accentIconButton(Feather.PLUS, "Add transmitter");
+        Button connectBtn = Icons.iconButton(Feather.LINK, "Connect selected transmitter");
+        Button disconnectBtn = Icons.iconButton(Feather.LINK_2, "Disconnect selected transmitter");
+        Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2, "Remove selected transmitter");
         HBox form = new HBox(6, nameField, hostField, portField,
                 addBtn, connectBtn, disconnectBtn, removeBtn);
         form.setAlignment(Pos.CENTER_LEFT);
@@ -83,14 +85,14 @@ public final class TransmittersPane extends BorderPane {
         table.getColumns().addAll(nameCol, hostCol, portCol, statusCol, countCol);
         table.setPrefHeight(180);
 
-        VBox top = new VBox(form, table);
+        VBox top = new VBox(new Label("Configured transmitters"), form, table);
 
         // --- Middle: JSON template editor ---
         TextArea templateArea = new TextArea(defaultRegistrationJson());
         templateArea.setPrefRowCount(10);
-        Button sendOnceBtn = new Button("Send once (to selected transmitter)");
-        Button synthBtn = new Button("Fill with synthesised Registration");
-        HBox sendRow = new HBox(6, sendOnceBtn, synthBtn);
+        Button sendOnceBtn = Icons.accentIconButton(Feather.SEND, "Send once (to selected transmitter)");
+        Button synthBtn = Icons.iconButton(Feather.REFRESH_CW, "Fill with a fresh synthesised Registration");
+        HBox sendRow = new HBox(6, new Label("Template:"), sendOnceBtn, synthBtn);
         sendRow.setAlignment(Pos.CENTER_LEFT);
         sendRow.setPadding(new Insets(6, 0, 6, 0));
 

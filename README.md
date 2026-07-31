@@ -111,6 +111,23 @@ Three tabs:
 2. **Transmitters** — add/connect TCP clients, edit a JSON template, send.
 3. **Log** — global application log (v0.2).
 
+### Icons
+
+Buttons across the UI use flat monochrome icons from the
+[Feather icon pack](https://feathericons.com/) (via Ikonli), so the
+toolbar reads at a glance without label clutter:
+
+- **➕ Add** (accent) — add a new receiver / transmitter
+- **▶︎ Play** — start a receiver
+- **■ Square** — stop a receiver
+- **🔗 Link** / **Link-off** — connect / disconnect a transmitter
+- **➤ Send** (accent) — send the current template
+- **🔄 Refresh** — regenerate the default template
+- **🗑 Trash** (danger) — remove a receiver / transmitter
+
+Every icon carries a hover tooltip so ye can always confirm what it
+does without guessing.
+
 ### Themes
 
 Flat / material themes via [AtlantaFX](https://github.com/mkpaz/atlantafx).

@@ -13,6 +13,7 @@ import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
@@ -20,6 +21,7 @@ import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import org.kordamp.ikonli.feather.Feather;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.SapientMessage;
 
 import java.net.SocketAddress;
@@ -48,10 +50,10 @@ public final class ReceiversPane extends BorderPane {
         nameField.setPromptText("Name (e.g. rx-A)");
         TextField portField = new TextField();
         portField.setPromptText("Port (e.g. 12000)");
-        Button addBtn = new Button("Add");
-        Button startBtn = new Button("Start");
-        Button stopBtn = new Button("Stop");
-        Button removeBtn = new Button("Remove");
+        Button addBtn = Icons.accentIconButton(Feather.PLUS, "Add receiver");
+        Button startBtn = Icons.iconButton(Feather.PLAY, "Start selected receiver");
+        Button stopBtn = Icons.iconButton(Feather.SQUARE, "Stop selected receiver");
+        Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2, "Remove selected receiver");
         HBox form = new HBox(6, nameField, portField, addBtn, startBtn, stopBtn, removeBtn);
         form.setAlignment(Pos.CENTER_LEFT);
         form.setPadding(new Insets(0, 0, 8, 0));
@@ -72,7 +74,7 @@ public final class ReceiversPane extends BorderPane {
         table.getColumns().addAll(nameCol, portCol, statusCol, countCol);
         table.setPrefHeight(220);
 
-        VBox top = new VBox(form, table);
+        VBox top = new VBox(new Label("Configured receivers"), form, table);
 
         // --- Bottom: message stream ---
         ListView<String> streamView = new ListView<>(stream);
