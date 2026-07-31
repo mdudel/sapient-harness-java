@@ -47,6 +47,31 @@ Runs on **Windows, Linux, macOS** — same JAR everywhere.
 ```bash
 git clone https://github.com/mdudel/sapient-harness-java.git
 cd sapient-harness-java
+```
+
+Then use the platform build script:
+
+**Windows:**
+```powershell
+build.bat           REM clean + install + test
+build.bat fast      REM skip tests
+build.bat run-ui    REM build then launch the UI
+build.bat help      REM full options list
+```
+
+**Linux / macOS:**
+```bash
+./build.sh          # clean + install + test
+./build.sh fast     # skip tests
+./build.sh run-ui   # build then launch the UI
+./build.sh help     # full options list
+```
+
+Both scripts wrap Maven, check yer Java + Maven versions,
+and tell ye where the runnable JARs land. Prefer the raw
+`mvn` incantation if ye like it:
+
+```bash
 mvn clean install
 ```
 
