@@ -92,6 +92,11 @@ public final class TransmittersPane extends BorderPane {
         Button connectBtn = Icons.iconButton(Feather.LINK, "Connect selected transmitter");
         Button disconnectBtn = Icons.iconButton(Feather.LINK_2, "Disconnect selected transmitter");
         Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2, "Remove selected transmitter");
+        // Keep the table's selection intact when these buttons are clicked.
+        addBtn.setFocusTraversable(false);
+        connectBtn.setFocusTraversable(false);
+        disconnectBtn.setFocusTraversable(false);
+        removeBtn.setFocusTraversable(false);
         HBox form = new HBox(6, nameField, hostField, portField,
                 addBtn, connectBtn, disconnectBtn, removeBtn);
         form.setAlignment(Pos.CENTER_LEFT);
@@ -128,6 +133,10 @@ public final class TransmittersPane extends BorderPane {
         Button sendBtn = Icons.accentIconButton(Feather.SEND, "Configure and send the selected message type");
         Button quickRegBtn = Icons.iconButton(Feather.ZAP,
                 "Quick send: minimal Registration with no dialog (smoke test)");
+        // Ditto: don't steal focus from the table selection.
+        sendBtn.setFocusTraversable(false);
+        quickRegBtn.setFocusTraversable(false);
+        typePicker.setFocusTraversable(false);
 
         HBox sendRow = new HBox(8,
                 new Label("Message type:"), typePicker,
@@ -163,7 +172,9 @@ public final class TransmittersPane extends BorderPane {
             int port;
             try { port = Integer.parseInt(portText); }
             catch (NumberFormatException ex) { return; }
-            rows.add(new TxRow(name, host, port));
+            TxRow newRow = new TxRow(name, host, port);
+            rows.add(newRow);
+            table.getSelectionModel().select(newRow);   // <-- auto-select so the next Send lands
             nameField.clear();
             hostField.clear();
             portField.clear();

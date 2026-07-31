@@ -11,6 +11,7 @@ import javafx.scene.Node;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ChoiceBox;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
@@ -43,6 +44,42 @@ public final class MessageDialogs {
     /** Wiesbaden default center for lat/lon fields. */
     public static final double DEFAULT_LAT = 50.0782;
     public static final double DEFAULT_LON = 8.2398;
+
+    /**
+     * Standard classification vocabulary for DetectionReport.classification.type.
+     *
+     * <p>SAPIENT BSI Flex 335 v2 doesn't define a fixed enum for classification
+     * strings — the field is deliberately open so ye can register domain-specific
+     * classifications in Registration and use them here. This list is the widely-
+     * seen "sensible defaults" set (drawn from dstl reference scenarios). The
+     * ComboBox is editable, so ye can type any custom string as well.
+     */
+    public static final java.util.List<String> STANDARD_CLASSIFICATIONS = java.util.List.of(
+            "unknown",
+            "person",
+            "group of persons",
+            "vehicle",
+            "land vehicle",
+            "tracked vehicle",
+            "wheeled vehicle",
+            "motorcycle",
+            "boat",
+            "surface vessel",
+            "aircraft",
+            "fixed wing aircraft",
+            "rotary wing aircraft",
+            "helicopter",
+            "uav",
+            "quadcopter",
+            "multirotor",
+            "drone",
+            "munition",
+            "missile",
+            "projectile",
+            "animal",
+            "clutter",
+            "false alarm"
+    );
 
     private MessageDialogs() {
     }
@@ -180,7 +217,10 @@ public final class MessageDialogs {
         movingBox.setSelected(true);
         Spinner<Double> speedSpinner = doubleSpinner(0.0, 500.0, 2.0, 0.5);
         Spinner<Integer> turnJitterSpinner = intSpinner(0, 180, 15);
-        TextField classField = new TextField("person");
+        ComboBox<String> classCombo = new ComboBox<>(
+                javafx.collections.FXCollections.observableArrayList(STANDARD_CLASSIFICATIONS));
+        classCombo.setEditable(true);
+        classCombo.setValue("person");
         Spinner<Double> confSpinner = doubleSpinner(0.0, 1.0, 0.85, 0.05);
 
         int row = 0;
@@ -193,7 +233,7 @@ public final class MessageDialogs {
         Forms.addRow(g, row++, "motion:", movingBox);
         Forms.addRow(g, row++, "speed (m/s):", speedSpinner);
         Forms.addRow(g, row++, "turn jitter (°):", turnJitterSpinner);
-        Forms.addRow(g, row++, "classification:", classField);
+        Forms.addRow(g, row++, "classification:", classCombo);
         Forms.addRow(g, row++, "confidence:", confSpinner);
         d.getDialogPane().setContent(g);
 
@@ -209,7 +249,7 @@ public final class MessageDialogs {
                     movingBox.isSelected(),
                     speedSpinner.getValue(),
                     turnJitterSpinner.getValue(),
-                    classField.getText(),
+                    classCombo.getValue() == null ? "unknown" : classCombo.getValue().trim(),
                     confSpinner.getValue().floatValue());
         });
         return d.showAndWait();

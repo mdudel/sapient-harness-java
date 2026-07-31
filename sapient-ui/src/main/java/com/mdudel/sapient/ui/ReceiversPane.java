@@ -54,6 +54,11 @@ public final class ReceiversPane extends BorderPane {
         Button startBtn = Icons.iconButton(Feather.PLAY, "Start selected receiver");
         Button stopBtn = Icons.iconButton(Feather.SQUARE, "Stop selected receiver");
         Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2, "Remove selected receiver");
+        // Don't steal focus from the table selection on click.
+        addBtn.setFocusTraversable(false);
+        startBtn.setFocusTraversable(false);
+        stopBtn.setFocusTraversable(false);
+        removeBtn.setFocusTraversable(false);
         HBox form = new HBox(6, nameField, portField, addBtn, startBtn, stopBtn, removeBtn);
         form.setAlignment(Pos.CENTER_LEFT);
         form.setPadding(new Insets(0, 0, 8, 0));
@@ -91,7 +96,9 @@ public final class ReceiversPane extends BorderPane {
             int port;
             try { port = Integer.parseInt(portText); }
             catch (NumberFormatException ex) { return; }
-            rows.add(new ReceiverRow(name, port));
+            ReceiverRow newRow = new ReceiverRow(name, port);
+            rows.add(newRow);
+            table.getSelectionModel().select(newRow);   // <-- auto-select so the next action lands
             nameField.clear();
             portField.clear();
         });
