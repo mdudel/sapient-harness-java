@@ -111,6 +111,18 @@ Three tabs:
 2. **Transmitters** — add/connect TCP clients, edit a JSON template, send.
 3. **Log** — global application log (v0.2).
 
+### Themes
+
+Flat / material themes via [AtlantaFX](https://github.com/mkpaz/atlantafx).
+Use **View → Toggle Dark / Light** (`Ctrl+D` / `Cmd+D`) for a quick flip, or
+**View → &lt;theme name&gt;** for the full picker:
+
+- **Light:** Primer Light (GitHub-style, default), Nord Light, Cupertino Light
+- **Dark:** Primer Dark, Nord Dark, Cupertino Dark, Dracula
+
+Yer choice is persisted at `~/.sapient-harness/theme` so the UI comes up
+the same way next launch.
+
 ## Wire format (for anyone integrating)
 
 Every SAPIENT message on the TCP wire is:
