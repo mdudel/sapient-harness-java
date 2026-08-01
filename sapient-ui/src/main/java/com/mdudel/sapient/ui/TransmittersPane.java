@@ -92,16 +92,8 @@ public final class TransmittersPane extends BorderPane {
         TextField portField = new TextField();
         portField.setPromptText("Port (e.g. 14000)");
         Button addBtn = Icons.accentIconButton(Feather.PLUS, "Add transmitter");
-        Button connectBtn = Icons.iconButton(Feather.PLAY, "Connect selected transmitter");
-        Button disconnectBtn = Icons.iconButton(Feather.SQUARE, "Disconnect selected transmitter");
-        Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2, "Remove selected transmitter");
-        // Keep the table's selection intact when these buttons are clicked.
         addBtn.setFocusTraversable(false);
-        connectBtn.setFocusTraversable(false);
-        disconnectBtn.setFocusTraversable(false);
-        removeBtn.setFocusTraversable(false);
-        HBox form = new HBox(6, nameField, hostField, portField,
-                addBtn, connectBtn, disconnectBtn, removeBtn);
+        HBox form = new HBox(6, nameField, hostField, portField, addBtn);
         form.setAlignment(Pos.CENTER_LEFT);
         form.setPadding(new Insets(0, 0, 8, 0));
 
@@ -125,9 +117,14 @@ public final class TransmittersPane extends BorderPane {
         // Bind to the activity STRING so the cell re-renders whenever activity
         // changes; the cell factory reads .generating for the stop-icon toggle.
         activityCol.setCellValueFactory(d -> d.getValue().activity);
-        activityCol.setPrefWidth(240);
+        activityCol.setPrefWidth(220);
         activityCol.setCellFactory(makeActivityCellFactory());
-        table.getColumns().addAll(nameCol, hostCol, portCol, statusCol, countCol, activityCol);
+        TableColumn<TxRow, Void> actionsCol = new TableColumn<>("Actions");
+        actionsCol.setCellFactory(makeActionsCellFactory());
+        actionsCol.setPrefWidth(140);
+        actionsCol.setSortable(false);
+        table.getColumns().addAll(nameCol, hostCol, portCol, statusCol, countCol,
+                activityCol, actionsCol);
         table.setPrefHeight(200);
 
         VBox top = new VBox(new Label("Configured transmitters"), form, table);
@@ -192,15 +189,7 @@ public final class TransmittersPane extends BorderPane {
             portField.clear();
         });
 
-        connectBtn.setOnAction(e -> connect(table.getSelectionModel().getSelectedItem()));
-        disconnectBtn.setOnAction(e -> disconnect(table.getSelectionModel().getSelectedItem()));
-        removeBtn.setOnAction(e -> {
-            TxRow row = table.getSelectionModel().getSelectedItem();
-            if (row == null) return;
-            stopGenerator(row);
-            disconnect(row);
-            rows.remove(row);
-        });
+
 
         // --- Wire up: message send ---
         sendBtn.setOnAction(e -> {
@@ -376,6 +365,55 @@ public final class TransmittersPane extends BorderPane {
         stopGenerator(row); // stop generator first so we don't try to send on a dead socket
         SapientTransmitter tx = live.remove(row.name.get());
         if (tx != null) new Thread(tx::close, "disconnect-" + row.name.get()).start();
+    }
+
+    // ---------- Actions column: per-row connect / disconnect / remove ----------
+
+    private Callback<TableColumn<TxRow, Void>, TableCell<TxRow, Void>>
+            makeActionsCellFactory() {
+        return col -> new TableCell<>() {
+            private final Button connectBtn = Icons.iconButton(Feather.PLAY,
+                    "Connect this transmitter");
+            private final Button disconnectBtn = Icons.iconButton(Feather.SQUARE,
+                    "Disconnect this transmitter");
+            private final Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2,
+                    "Remove this transmitter");
+            private final HBox box;
+            {
+                connectBtn.setFocusTraversable(false);
+                disconnectBtn.setFocusTraversable(false);
+                removeBtn.setFocusTraversable(false);
+                connectBtn.getStyleClass().add("flat");
+                disconnectBtn.getStyleClass().add("flat");
+                removeBtn.getStyleClass().add("flat");
+                box = new HBox(4, connectBtn, disconnectBtn, removeBtn);
+                box.setAlignment(Pos.CENTER_LEFT);
+                connectBtn.setOnAction(e -> {
+                    TxRow r = getTableView().getItems().get(getIndex());
+                    connect(r);
+                });
+                disconnectBtn.setOnAction(e -> {
+                    TxRow r = getTableView().getItems().get(getIndex());
+                    disconnect(r);
+                });
+                removeBtn.setOnAction(e -> {
+                    TxRow r = getTableView().getItems().get(getIndex());
+                    stopGenerator(r);
+                    disconnect(r);
+                    rows.remove(r);
+                });
+            }
+
+            @Override
+            protected void updateItem(Void v, boolean empty) {
+                super.updateItem(v, empty);
+                if (empty || getIndex() < 0 || getIndex() >= getTableView().getItems().size()) {
+                    setGraphic(null);
+                    return;
+                }
+                setGraphic(box);
+            }
+        };
     }
 
     // ---------- Custom activity cell (inline stop icon when generating) ----------

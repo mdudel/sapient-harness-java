@@ -13,15 +13,18 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.util.Callback;
 import org.kordamp.ikonli.feather.Feather;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.SapientMessage;
 
@@ -54,15 +57,8 @@ public final class ReceiversPane extends BorderPane {
         TextField portField = new TextField();
         portField.setPromptText("Port (e.g. 12000)");
         Button addBtn = Icons.accentIconButton(Feather.PLUS, "Add receiver");
-        Button startBtn = Icons.iconButton(Feather.PLAY, "Start selected receiver");
-        Button stopBtn = Icons.iconButton(Feather.SQUARE, "Stop selected receiver");
-        Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2, "Remove selected receiver");
-        // Don't steal focus from the table selection on click.
         addBtn.setFocusTraversable(false);
-        startBtn.setFocusTraversable(false);
-        stopBtn.setFocusTraversable(false);
-        removeBtn.setFocusTraversable(false);
-        HBox form = new HBox(6, nameField, portField, addBtn, startBtn, stopBtn, removeBtn);
+        HBox form = new HBox(6, nameField, portField, addBtn);
         form.setAlignment(Pos.CENTER_LEFT);
         form.setPadding(new Insets(0, 0, 8, 0));
 
@@ -79,7 +75,11 @@ public final class ReceiversPane extends BorderPane {
         TableColumn<ReceiverRow, Number> countCol = new TableColumn<>("Received");
         countCol.setCellValueFactory(d -> d.getValue().received);
         countCol.setPrefWidth(100);
-        table.getColumns().addAll(nameCol, portCol, statusCol, countCol);
+        TableColumn<ReceiverRow, Void> actionsCol = new TableColumn<>("Actions");
+        actionsCol.setCellFactory(makeActionsCellFactory());
+        actionsCol.setPrefWidth(140);
+        actionsCol.setSortable(false);
+        table.getColumns().addAll(nameCol, portCol, statusCol, countCol, actionsCol);
         table.setPrefHeight(220);
 
         VBox top = new VBox(new Label("Configured receivers"), form, table);
@@ -106,63 +106,107 @@ public final class ReceiversPane extends BorderPane {
             portField.clear();
         });
 
-        startBtn.setOnAction(e -> {
-            ReceiverRow row = table.getSelectionModel().getSelectedItem();
-            if (row == null || live.containsKey(row.name.get())) return;
-            SapientMessageListener listener = new SapientMessageListener() {
-                @Override
-                public void onConnected(SocketAddress peer) {
-                    Platform.runLater(() -> append(row, "← CONNECT " + peer));
-                }
-                @Override
-                public void onDisconnected(SocketAddress peer) {
-                    Platform.runLater(() -> append(row, "← DISCONNECT " + peer));
-                }
-                @Override
-                public void onMessage(SocketAddress peer, SapientMessage msg) {
-                    SapientMessageValidator.ValidationResult v =
-                            SapientMessageValidator.validate(msg);
-                    Platform.runLater(() -> {
-                        row.received.set(row.received.get() + 1);
-                        append(row, "← " + peer + "   " + v.summary());
-                    });
-                }
-                @Override
-                public void onError(SocketAddress peer, Throwable cause) {
-                    Platform.runLater(() -> append(row, "! ERROR from " + peer + ": " + cause));
-                }
-            };
-            SapientReceiver rx = new SapientReceiver(row.name.get(), row.port.get(), listener);
-            new Thread(() -> {
-                try {
-                    rx.start();
-                    live.put(row.name.get(), rx);
-                    Platform.runLater(() -> row.status.set("running"));
-                } catch (Exception ex) {
-                    Platform.runLater(() -> row.status.set("error: " + ex.getMessage()));
-                }
-            }, "start-" + row.name.get()).start();
-        });
+    }
 
-        stopBtn.setOnAction(e -> {
-            ReceiverRow row = table.getSelectionModel().getSelectedItem();
-            if (row == null) return;
-            SapientReceiver rx = live.remove(row.name.get());
-            if (rx != null) {
-                new Thread(() -> {
-                    rx.stop();
-                    Platform.runLater(() -> row.status.set("stopped"));
-                }, "stop-" + row.name.get()).start();
+    // ---------- Per-row actions ----------
+
+    private void startRow(ReceiverRow row) {
+        if (row == null || live.containsKey(row.name.get())) return;
+        SapientMessageListener listener = new SapientMessageListener() {
+            @Override
+            public void onConnected(SocketAddress peer) {
+                Platform.runLater(() -> append(row, "← CONNECT " + peer));
             }
-        });
+            @Override
+            public void onDisconnected(SocketAddress peer) {
+                Platform.runLater(() -> append(row, "← DISCONNECT " + peer));
+            }
+            @Override
+            public void onMessage(SocketAddress peer, SapientMessage msg) {
+                SapientMessageValidator.ValidationResult v =
+                        SapientMessageValidator.validate(msg);
+                Platform.runLater(() -> {
+                    row.received.set(row.received.get() + 1);
+                    append(row, "← " + peer + "   " + v.summary());
+                });
+            }
+            @Override
+            public void onError(SocketAddress peer, Throwable cause) {
+                Platform.runLater(() -> append(row, "! ERROR from " + peer + ": " + cause));
+            }
+        };
+        SapientReceiver rx = new SapientReceiver(row.name.get(), row.port.get(), listener);
+        new Thread(() -> {
+            try {
+                rx.start();
+                live.put(row.name.get(), rx);
+                Platform.runLater(() -> row.status.set("running"));
+            } catch (Exception ex) {
+                Platform.runLater(() -> row.status.set("error: " + ex.getMessage()));
+            }
+        }, "start-" + row.name.get()).start();
+    }
 
-        removeBtn.setOnAction(e -> {
-            ReceiverRow row = table.getSelectionModel().getSelectedItem();
-            if (row == null) return;
-            SapientReceiver rx = live.remove(row.name.get());
-            if (rx != null) rx.stop();
-            rows.remove(row);
-        });
+    private void stopRow(ReceiverRow row) {
+        if (row == null) return;
+        SapientReceiver rx = live.remove(row.name.get());
+        if (rx != null) {
+            new Thread(() -> {
+                rx.stop();
+                Platform.runLater(() -> row.status.set("stopped"));
+            }, "stop-" + row.name.get()).start();
+        }
+    }
+
+    private void removeRow(ReceiverRow row) {
+        if (row == null) return;
+        SapientReceiver rx = live.remove(row.name.get());
+        if (rx != null) rx.stop();
+        rows.remove(row);
+    }
+
+    // ---------- Actions column cell factory ----------
+
+    private Callback<TableColumn<ReceiverRow, Void>, TableCell<ReceiverRow, Void>>
+            makeActionsCellFactory() {
+        return col -> new TableCell<>() {
+            private final Button startBtn = Icons.iconButton(Feather.PLAY, "Start this receiver");
+            private final Button stopBtn  = Icons.iconButton(Feather.SQUARE, "Stop this receiver");
+            private final Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2, "Remove this receiver");
+            private final HBox box;
+            {
+                startBtn.setFocusTraversable(false);
+                stopBtn.setFocusTraversable(false);
+                removeBtn.setFocusTraversable(false);
+                startBtn.getStyleClass().add("flat");
+                stopBtn.getStyleClass().add("flat");
+                removeBtn.getStyleClass().add("flat");
+                box = new HBox(4, startBtn, stopBtn, removeBtn);
+                box.setAlignment(Pos.CENTER_LEFT);
+                startBtn.setOnAction(e -> {
+                    ReceiverRow r = getTableView().getItems().get(getIndex());
+                    startRow(r);
+                });
+                stopBtn.setOnAction(e -> {
+                    ReceiverRow r = getTableView().getItems().get(getIndex());
+                    stopRow(r);
+                });
+                removeBtn.setOnAction(e -> {
+                    ReceiverRow r = getTableView().getItems().get(getIndex());
+                    removeRow(r);
+                });
+            }
+
+            @Override
+            protected void updateItem(Void v, boolean empty) {
+                super.updateItem(v, empty);
+                if (empty || getIndex() < 0 || getIndex() >= getTableView().getItems().size()) {
+                    setGraphic(null);
+                    return;
+                }
+                setGraphic(box);
+            }
+        };
     }
 
     private void append(ReceiverRow row, String line) {
