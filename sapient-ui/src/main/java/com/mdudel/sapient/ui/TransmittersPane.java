@@ -9,6 +9,7 @@ import com.mdudel.sapient.core.template.MessageTemplateLoader;
 import com.mdudel.sapient.net.SapientMessageListener;
 import com.mdudel.sapient.net.SapientTransmitter;
 import com.mdudel.sapient.ui.dialog.MessageDialogs;
+import com.mdudel.sapient.ui.persist.SessionStore;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleIntegerProperty;
@@ -36,7 +37,9 @@ import uk.gov.dstl.sapientmsg.bsiflex335v2.SapientMessage;
 import java.net.SocketAddress;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -424,6 +427,39 @@ public final class TransmittersPane extends BorderPane {
         while (stream.size() > 500) stream.remove(stream.size() - 1);
     }
 
+    // ---------- Persistence ----------
+
+    /** Snapshot the current configured-transmitter list for persistence. */
+    public List<SessionStore.SavedTransmitter> snapshot() {
+        List<SessionStore.SavedTransmitter> out = new ArrayList<>();
+        for (TxRow r : rows) {
+            out.add(new SessionStore.SavedTransmitter(
+                    r.name.get(), r.host.get(), r.port.get(), r.nodeId));
+        }
+        return out;
+    }
+
+    /** Restore a previously-saved list of transmitters (comes up disconnected). */
+    public void restore(List<SessionStore.SavedTransmitter> saved) {
+        if (saved == null) return;
+        for (SessionStore.SavedTransmitter s : saved) {
+            if (s == null || s.name == null || s.name.isBlank()) continue;
+            rows.add(new TxRow(s.name, s.host, s.port, s.nodeId));
+        }
+    }
+
+    /** Stop every generator + disconnect every transmitter — called on window close. */
+    public void shutdown() {
+        for (DetectionGenerator gen : generators.values()) {
+            try { gen.stop(); } catch (Exception ignored) { }
+        }
+        generators.clear();
+        for (SapientTransmitter tx : live.values()) {
+            try { tx.close(); } catch (Exception ignored) { }
+        }
+        live.clear();
+    }
+
     // ---------- Row model ----------
 
     static final class TxRow {
@@ -438,6 +474,11 @@ public final class TransmittersPane extends BorderPane {
         final String nodeId;
 
         TxRow(String name, String host, int port) {
+            this(name, host, port, UUID.randomUUID().toString());
+        }
+
+        /** Constructor that preserves an existing node_id (used on restore). */
+        TxRow(String name, String host, int port, String nodeId) {
             this.name = new SimpleStringProperty(name);
             this.host = new SimpleStringProperty(host);
             this.port = new SimpleIntegerProperty(port);
@@ -445,7 +486,9 @@ public final class TransmittersPane extends BorderPane {
             this.sent = new SimpleIntegerProperty(0);
             this.activity = new SimpleStringProperty("");
             this.generating = new SimpleBooleanProperty(false);
-            this.nodeId = UUID.randomUUID().toString();
+            this.nodeId = (nodeId == null || nodeId.isBlank())
+                    ? UUID.randomUUID().toString()
+                    : nodeId;
         }
     }
 

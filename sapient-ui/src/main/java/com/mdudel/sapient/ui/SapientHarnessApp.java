@@ -4,6 +4,7 @@
  */
 package com.mdudel.sapient.ui;
 
+import com.mdudel.sapient.ui.persist.SessionStore;
 import javafx.application.Application;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
@@ -41,9 +42,17 @@ public final class SapientHarnessApp extends Application {
         currentTheme = ThemeManager.loadSaved();
         ThemeManager.apply(currentTheme);
 
+        // Restore any previously-saved receivers/transmitters BEFORE the panes
+        // are added to the scene so they show up on first paint.
+        ReceiversPane receivers = new ReceiversPane();
+        TransmittersPane transmitters = new TransmittersPane();
+        SessionStore.Session saved = SessionStore.load();
+        receivers.restore(saved.receivers);
+        transmitters.restore(saved.transmitters);
+
         TabPane tabs = new TabPane();
-        tabs.getTabs().add(new Tab("Receivers", new ReceiversPane()));
-        tabs.getTabs().add(new Tab("Transmitters", new TransmittersPane()));
+        tabs.getTabs().add(new Tab("Receivers", receivers));
+        tabs.getTabs().add(new Tab("Transmitters", transmitters));
         tabs.getTabs().add(new Tab("Log", new LogPane()));
         tabs.getTabs().forEach(t -> t.setClosable(false));
 
@@ -55,7 +64,14 @@ public final class SapientHarnessApp extends Application {
         stage.setTitle("SAPIENT Test Harness (Java) — v0.1.0-SNAPSHOT");
         stage.setScene(scene);
         stage.setOnCloseRequest(evt -> {
-            // Ensure any background threads (Netty groups) shut down cleanly.
+            // Persist the current config list, then shut everything down cleanly.
+            SessionStore.Session out = new SessionStore.Session();
+            out.receivers = receivers.snapshot();
+            out.transmitters = transmitters.snapshot();
+            SessionStore.save(out);
+
+            receivers.shutdown();
+            transmitters.shutdown();
             System.exit(0);
         });
         stage.show();

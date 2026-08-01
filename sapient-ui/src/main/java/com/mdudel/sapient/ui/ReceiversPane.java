@@ -7,6 +7,7 @@ package com.mdudel.sapient.ui;
 import com.mdudel.sapient.core.validation.SapientMessageValidator;
 import com.mdudel.sapient.net.SapientMessageListener;
 import com.mdudel.sapient.net.SapientReceiver;
+import com.mdudel.sapient.ui.persist.SessionStore;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -27,7 +28,9 @@ import uk.gov.dstl.sapientmsg.bsiflex335v2.SapientMessage;
 import java.net.SocketAddress;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -167,6 +170,32 @@ public final class ReceiversPane extends BorderPane {
         stream.add(0, "[" + ts + "] " + row.name.get() + ": " + line);
         // cap history
         while (stream.size() > 500) stream.remove(stream.size() - 1);
+    }
+
+    /** Snapshot the current configured-receiver list for persistence. */
+    public List<SessionStore.SavedReceiver> snapshot() {
+        List<SessionStore.SavedReceiver> out = new ArrayList<>();
+        for (ReceiverRow r : rows) {
+            out.add(new SessionStore.SavedReceiver(r.name.get(), r.port.get()));
+        }
+        return out;
+    }
+
+    /** Restore a previously-saved list of receivers (comes up stopped). */
+    public void restore(List<SessionStore.SavedReceiver> saved) {
+        if (saved == null) return;
+        for (SessionStore.SavedReceiver s : saved) {
+            if (s == null || s.name == null || s.name.isBlank()) continue;
+            rows.add(new ReceiverRow(s.name, s.port));
+        }
+    }
+
+    /** Stop every running receiver — called on window close. */
+    public void shutdown() {
+        for (SapientReceiver rx : live.values()) {
+            try { rx.stop(); } catch (Exception ignored) { }
+        }
+        live.clear();
     }
 
     /** Row model for a configured receiver (name, port, status, received count). */
