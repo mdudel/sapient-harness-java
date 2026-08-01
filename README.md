@@ -144,7 +144,7 @@ incoming traffic.
 
 Configured receivers persist to `~/.sapient-harness/session.json` and
 come up stopped on next launch — no ports are reopened automatically.
-
+![Receiver Tab](/imgs/ui-00.png)
 ### Transmitters tab
 
 Configure TCP clients that connect to a remote SAPIENT receiver and
@@ -167,7 +167,7 @@ send messages, either one-shot or via a scheduled generator.
 Configured transmitters persist to `~/.sapient-harness/session.json`
 along with each row's SAPIENT node UUID, so the middleware sees the
 same node identity across restarts.
-
+![Tx Tab](/imgs/ui-01.png)
 The **Detection Report** and **Sensor status** dropdown entries open
 scheduled generators rather than one-shot dialogs — see below.
 
@@ -225,7 +225,7 @@ Simulates a fleet of tracked objects around a centre point.
   times; leaving all altitude fields at zero produces messages without
   a `Location.z` field for backwards compatibility with older
   receivers.
-
+![Det Tab](/imgs/ui-02.png)
 ### Sensor status generator
 
 Emits `StatusReport` heartbeats with a live field of view. Complements
@@ -253,7 +253,7 @@ the volume I am currently observing". They pair naturally in a demo.
   are all configurable.
 - Info flag: first tick emits `INFO_NEW`, subsequent ticks emit
   `INFO_UNCHANGED` per SAPIENT semantics.
-
+![Stat Tab](/imgs/ui-03.png)
 ## Themes
 
 Flat and material themes via
