@@ -367,14 +367,13 @@ sapient-harness-java/
   persistence; detection generator with altitude; sensor generator
   with cone / polygon FOV, stationary and moving platform; one-shot
   StatusReport with optional cone or polygon FOV.
-- **v0.2** — scenario save/load (YAML), scheduled/repeated send in
-  the UI, broadcast from receiver, full log tail in UI, echo command
-  in the CLI, running-generators tray with per-generator inspection.
+- **v0.2** — scenario save/load (JSON, alongside the existing
+  per-session persistence), scheduled/repeated send in the UI,
+  broadcast from receiver, full log tail in the UI, echo command in
+  the CLI, running-generators tray with per-generator inspection.
 - **v0.3** — full dstl validator suite ported (all 30 field-level
   validators); pcap capture and replay; native installers via
   `jpackage`.
-- **v0.4** — BSI Flex 335 v1 protos (dstl proto repository has them;
-  this project pins to v2 for now).
 
 ## Contributing
 

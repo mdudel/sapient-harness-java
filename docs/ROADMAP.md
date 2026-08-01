@@ -15,7 +15,7 @@
 
 ## v0.2 — Usability
 
-- [ ] Scenario save/load (YAML) — persist a full config of receivers +
+- [ ] Scenario save/load (JSON) — persist a full config of receivers +
       transmitters + templates + schedules
 - [ ] Broadcast/reply support in `SapientReceiver` (ChannelGroup)
 - [ ] Scheduled repeated send in UI (send every N ms)
@@ -35,12 +35,6 @@
 - [ ] jpackage native installers: `.msi` (Windows), `.dmg` (macOS),
       `.deb` (Linux)
 - [ ] GitHub Actions CI: build + test on Linux/macOS/Windows matrices
-
-## v0.4 — Multi-version
-
-- [ ] BSI Flex 335 v1 protos also compiled (dstl proto repo has them)
-- [ ] Wire-detection heuristic: auto-select v1 vs v2 based on message
-      shape (or explicit config toggle per receiver)
 
 ## Beyond
 
