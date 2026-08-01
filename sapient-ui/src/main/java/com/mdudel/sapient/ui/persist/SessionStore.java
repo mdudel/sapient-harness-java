@@ -6,8 +6,7 @@ package com.mdudel.sapient.ui.persist;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
+import com.fasterxml.jackson.databind.SerializationFeature;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -16,26 +15,32 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Persist the configured receiver + transmitter LIST between runs.
+ * Persist all UI state between runs to a single JSON file.
  *
- * <p>Stored at {@code ${user.home}/.sapient-harness/session.yaml}. Only
- * configuration data is persisted — runtime state (open sockets, generator
- * activity) is deliberately NOT saved because sockets don't survive a JVM
- * restart anyway. Restored receivers come up stopped; restored transmitters
- * come up disconnected.
+ * <p>Stored at {@code ${user.home}/.sapient-harness/session.json}. Contains:
+ * <ul>
+ *   <li>configured receivers (name + port),</li>
+ *   <li>configured transmitters (name + host + port + stable node_id),</li>
+ *   <li>current theme name.</li>
+ * </ul>
+ *
+ * <p>Only configuration data is persisted — runtime state (open sockets,
+ * generator activity) is deliberately NOT saved because sockets don't survive
+ * a JVM restart anyway. Restored receivers come up stopped; restored
+ * transmitters come up disconnected.
  *
  * <p>Save is best-effort — a write failure never crashes the UI. Load falls
  * back to an empty session if the file is missing or unparseable.
  */
 public final class SessionStore {
 
-    /** File where the session config is persisted. */
+    /** File where all UI config is persisted. */
     private static final Path SESSION_FILE = Path.of(
-            System.getProperty("user.home"), ".sapient-harness", "session.yaml");
+            System.getProperty("user.home"), ".sapient-harness", "session.json");
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory()
-            .disable(YAMLGenerator.Feature.WRITE_DOC_START_MARKER))
-            .setSerializationInclusion(JsonInclude.Include.NON_NULL);
+    private static final ObjectMapper JSON = new ObjectMapper()
+            .setSerializationInclusion(JsonInclude.Include.NON_NULL)
+            .enable(SerializationFeature.INDENT_OUTPUT);
 
     private SessionStore() {
     }
@@ -69,10 +74,12 @@ public final class SessionStore {
         }
     }
 
-    /** Root container for the on-disk YAML document. */
+    /** Root container for the on-disk JSON document. */
     public static final class Session {
         public List<SavedReceiver> receivers = new ArrayList<>();
         public List<SavedTransmitter> transmitters = new ArrayList<>();
+        /** Current theme display name (see {@link com.mdudel.sapient.ui.ThemeManager}). */
+        public String theme;
     }
 
     /**
@@ -83,7 +90,7 @@ public final class SessionStore {
     public static Session load() {
         try {
             if (Files.exists(SESSION_FILE)) {
-                Session s = YAML.readValue(SESSION_FILE.toFile(), Session.class);
+                Session s = JSON.readValue(SESSION_FILE.toFile(), Session.class);
                 if (s != null) {
                     if (s.receivers == null) s.receivers = new ArrayList<>();
                     if (s.transmitters == null) s.transmitters = new ArrayList<>();
@@ -103,7 +110,7 @@ public final class SessionStore {
     public static void save(Session session) {
         try {
             Files.createDirectories(SESSION_FILE.getParent());
-            YAML.writerWithDefaultPrettyPrinter().writeValue(SESSION_FILE.toFile(), session);
+            JSON.writeValue(SESSION_FILE.toFile(), session);
         } catch (IOException ignored) {
             // best-effort
         }

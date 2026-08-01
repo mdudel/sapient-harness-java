@@ -64,10 +64,11 @@ public final class SapientHarnessApp extends Application {
         stage.setTitle("SAPIENT Test Harness (Java) — v0.1.0-SNAPSHOT");
         stage.setScene(scene);
         stage.setOnCloseRequest(evt -> {
-            // Persist the current config list, then shut everything down cleanly.
+            // Persist the current config list AND theme, then shut everything down cleanly.
             SessionStore.Session out = new SessionStore.Session();
             out.receivers = receivers.snapshot();
             out.transmitters = transmitters.snapshot();
+            out.theme = currentTheme;
             SessionStore.save(out);
 
             receivers.shutdown();

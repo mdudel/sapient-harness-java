@@ -12,11 +12,9 @@ import atlantafx.base.theme.NordLight;
 import atlantafx.base.theme.PrimerDark;
 import atlantafx.base.theme.PrimerLight;
 import atlantafx.base.theme.Theme;
+import com.mdudel.sapient.ui.persist.SessionStore;
 import javafx.application.Application;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -56,10 +54,6 @@ public final class ThemeManager {
     /** Default theme when nothing is persisted. */
     public static final String DEFAULT_THEME_NAME = "Primer Light";
 
-    /** File where the current theme name is remembered between launches. */
-    private static final Path CONFIG =
-            Path.of(System.getProperty("user.home"), ".sapient-harness", "theme");
-
     private ThemeManager() {
         // utility
     }
@@ -76,34 +70,26 @@ public final class ThemeManager {
     }
 
     /**
-     * Read the persisted theme name from disk. Returns {@link #DEFAULT_THEME_NAME}
-     * if no config exists, is unreadable, or names an unknown theme.
+     * Read the persisted theme name from the session file. Returns
+     * {@link #DEFAULT_THEME_NAME} if no theme is set, is unknown, or the
+     * session file is missing.
      */
     public static String loadSaved() {
-        try {
-            if (Files.exists(CONFIG)) {
-                String name = Files.readString(CONFIG).trim();
-                if (THEMES.containsKey(name)) {
-                    return name;
-                }
-            }
-        } catch (IOException ignored) {
-            // fall through to default
+        SessionStore.Session s = SessionStore.load();
+        if (s.theme != null && THEMES.containsKey(s.theme)) {
+            return s.theme;
         }
         return DEFAULT_THEME_NAME;
     }
 
     /**
-     * Persist the given theme name to disk. Best-effort; failures are
-     * silently ignored (we don't want a config-write hiccup to kill the UI).
+     * Persist the given theme name. Loads the current session, updates the
+     * theme field, writes it back. Best-effort: a write hiccup is swallowed.
      */
     public static void save(String name) {
-        try {
-            Files.createDirectories(CONFIG.getParent());
-            Files.writeString(CONFIG, name);
-        } catch (IOException ignored) {
-            // best-effort
-        }
+        SessionStore.Session s = SessionStore.load();
+        s.theme = name;
+        SessionStore.save(s);
     }
 
     /**
