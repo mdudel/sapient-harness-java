@@ -241,7 +241,24 @@ public final class MessageDialogs {
         fovPane.setExpanded(false);   // hidden by default: dialog looks unchanged
 
         VBoxWrapper content = new VBoxWrapper(coreG, fovPane);
-        d.getDialogPane().setContent(content);
+
+        // 2026-08-01 19:02 UTC (SkyLord): with FOV expanded the dialog
+        // pushed past the bottom of a 720p display and left OK/Cancel
+        // unreachable — no scroll bar to catch the overflow. Same fix as
+        // the Sensor Generator dialog got in 086d9b3: wrap in a bounded
+        // ScrollPane so vertical growth is capped and the vbar appears
+        // as needed. Dialog stays resizable so the user can grow it
+        // manually if they want to see everything at once.
+        ScrollPane scroll = new ScrollPane(content);
+        scroll.setFitToWidth(true);
+        scroll.setPrefViewportHeight(480);
+        scroll.setPrefViewportWidth(460);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+
+        d.getDialogPane().setContent(scroll);
+        d.setResizable(true);
+        d.getDialogPane().setPrefHeight(540);
 
         d.setResultConverter(bt -> {
             if (bt != ButtonType.OK) return null;
