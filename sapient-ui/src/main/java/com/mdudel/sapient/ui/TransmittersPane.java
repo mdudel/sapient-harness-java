@@ -89,8 +89,8 @@ public final class TransmittersPane extends BorderPane {
         TextField portField = new TextField();
         portField.setPromptText("Port (e.g. 14000)");
         Button addBtn = Icons.accentIconButton(Feather.PLUS, "Add transmitter");
-        Button connectBtn = Icons.iconButton(Feather.LINK, "Connect selected transmitter");
-        Button disconnectBtn = Icons.iconButton(Feather.LINK_2, "Disconnect selected transmitter");
+        Button connectBtn = Icons.iconButton(Feather.PLAY, "Connect selected transmitter");
+        Button disconnectBtn = Icons.iconButton(Feather.SQUARE, "Disconnect selected transmitter");
         Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2, "Remove selected transmitter");
         // Keep the table's selection intact when these buttons are clicked.
         addBtn.setFocusTraversable(false);
@@ -119,8 +119,10 @@ public final class TransmittersPane extends BorderPane {
         countCol.setCellValueFactory(d -> d.getValue().sent);
         countCol.setPrefWidth(70);
         TableColumn<TxRow, String> activityCol = new TableColumn<>("Activity");
+        // Bind to the activity STRING so the cell re-renders whenever activity
+        // changes; the cell factory reads .generating for the stop-icon toggle.
         activityCol.setCellValueFactory(d -> d.getValue().activity);
-        activityCol.setPrefWidth(200);
+        activityCol.setPrefWidth(240);
         activityCol.setCellFactory(makeActivityCellFactory());
         table.getColumns().addAll(nameCol, hostCol, portCol, statusCol, countCol, activityCol);
         table.setPrefHeight(200);
@@ -133,14 +135,21 @@ public final class TransmittersPane extends BorderPane {
         Button sendBtn = Icons.accentIconButton(Feather.SEND, "Configure and send the selected message type");
         Button quickRegBtn = Icons.iconButton(Feather.ZAP,
                 "Quick send: minimal Registration with no dialog (smoke test)");
+        Button stopGenBtn = Icons.dangerIconButton(Feather.SQUARE,
+                "Stop the detection generator running on the selected transmitter");
         // Ditto: don't steal focus from the table selection.
         sendBtn.setFocusTraversable(false);
         quickRegBtn.setFocusTraversable(false);
+        stopGenBtn.setFocusTraversable(false);
         typePicker.setFocusTraversable(false);
 
         HBox sendRow = new HBox(8,
                 new Label("Message type:"), typePicker,
-                sendBtn, quickRegBtn);
+                sendBtn, quickRegBtn,
+                new javafx.scene.layout.Region() {{
+                    javafx.scene.layout.HBox.setHgrow(this, javafx.scene.layout.Priority.ALWAYS);
+                }},
+                new Label("Detection generator:"), stopGenBtn);
         sendRow.setAlignment(Pos.CENTER_LEFT);
         sendRow.setPadding(new Insets(8, 0, 8, 0));
 
@@ -199,6 +208,20 @@ public final class TransmittersPane extends BorderPane {
             }
             MsgType type = typePicker.getValue();
             handleSend(row, type);
+        });
+
+        // Stop the detection generator on the selected transmitter (if any).
+        stopGenBtn.setOnAction(e -> {
+            TxRow row = table.getSelectionModel().getSelectedItem();
+            if (row == null) {
+                append(null, "! no transmitter selected");
+                return;
+            }
+            if (!row.generating.get()) {
+                append(row, "! no detection generator is running on this transmitter");
+                return;
+            }
+            stopGenerator(row);
         });
 
         // Quick send: pre-canned minimal Registration for smoke tests
@@ -286,7 +309,9 @@ public final class TransmittersPane extends BorderPane {
         generators.put(row.name.get(), gen);
         gen.start();
         row.generating.set(true);
-        row.activity.set(String.format("generating: %d tracks @ %d ms%s",
+        // Prefix with an emoji so the cell contents change visibly even if
+        // the inline stop-icon renderer misfires on some JavaFX versions.
+        row.activity.set(String.format("▶ generating: %d tracks @ %d ms%s",
                 cfg.trackCount, cfg.tickMs, cfg.moving ? " (moving)" : ""));
         append(row, "▶ started detection generator: " + cfg.trackCount
                 + " tracks, " + cfg.tickMs + " ms rate, moving=" + cfg.moving);
