@@ -5,7 +5,6 @@
 package com.mdudel.sapient.core.gen;
 
 import com.mdudel.sapient.core.factory.MessageFactory;
-import com.mdudel.sapient.core.geo.Geo;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.LocationList;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.LocationOrRangeBearing;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.RangeBearingCone;
@@ -13,7 +12,6 @@ import uk.gov.dstl.sapientmsg.bsiflex335v2.RangeBearingDatum;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.SapientMessage;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.StatusReport;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.Executors;
@@ -300,25 +298,15 @@ public final class SensorGenerator implements AutoCloseable {
             return MessageFactory.fovCone(cone);
         }
 
-        // POLYGON: project the cone's ground footprint. Triangle with the
-        // sensor at the apex and an arc of vertices at rangeMeters out along
-        // (azimuth - horizontalExtent/2) .. (azimuth + horizontalExtent/2).
-        // Vertex count includes the apex, so N-1 arc vertices span the arc.
-        List<double[]> vertices = new ArrayList<>();
-        vertices.add(new double[] { platform.lat, platform.lon });   // apex
-
-        double halfExtent = config.horizontalExtentDeg / 2.0;
-        int arcVerts = Math.max(2, config.polygonVertexCount - 1);
-        for (int i = 0; i < arcVerts; i++) {
-            double t = (arcVerts == 1) ? 0.0 : (double) i / (arcVerts - 1);
-            double azDeg = currentAzimuthDeg - halfExtent + t * config.horizontalExtentDeg;
-            double azRad = Math.toRadians(azDeg);
-            double dEast = config.rangeMeters * Math.sin(azRad);
-            double dNorth = config.rangeMeters * Math.cos(azRad);
-            double[] p = Geo.offset(platform.lat, platform.lon, dEast, dNorth);
-            vertices.add(p);
-        }
-
+        // POLYGON: project the cone's ground footprint via the shared
+        // helper so the one-shot StatusReport dialog and the live ticker
+        // stay in perfect lock-step.
+        List<double[]> vertices = SensorGeometry.projectConeFootprint(
+                platform.lat, platform.lon,
+                currentAzimuthDeg,
+                config.horizontalExtentDeg,
+                config.rangeMeters,
+                config.polygonVertexCount);
         LocationList poly = MessageFactory.polygon(vertices, config.centerAltM);
         return MessageFactory.fovPolygon(poly);
     }

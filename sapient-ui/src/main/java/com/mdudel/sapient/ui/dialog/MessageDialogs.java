@@ -7,6 +7,11 @@ package com.mdudel.sapient.ui.dialog;
 import com.mdudel.sapient.core.factory.MessageFactory;
 import com.mdudel.sapient.core.gen.DetectionGenerator;
 import com.mdudel.sapient.core.gen.SensorGenerator;
+import com.mdudel.sapient.core.gen.SensorGeometry;
+import uk.gov.dstl.sapientmsg.bsiflex335v2.LocationList;
+import uk.gov.dstl.sapientmsg.bsiflex335v2.LocationOrRangeBearing;
+import uk.gov.dstl.sapientmsg.bsiflex335v2.RangeBearingCone;
+import uk.gov.dstl.sapientmsg.bsiflex335v2.RangeBearingDatum;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.Accordion;
@@ -142,10 +147,27 @@ public final class MessageDialogs {
     }
 
     // ---------- StatusReport ----------
+    /** FOV mode for the one-shot StatusReport dialog. */
+    private enum StatusFovMode { NONE, CONE, POLYGON }
+
+    /**
+     * One-shot StatusReport dialog. As of 2026-08-01 16:12 UTC an optional
+     * FOV attachment can ship with the message: NONE (no field_of_view on
+     * the wire, back-compat default), CONE (a static
+     * {@link RangeBearingCone}), or POLYGON (the cone's ground footprint
+     * projected via {@link SensorGeometry#projectConeFootprint} — same
+     * projection math the live SensorGenerator ticker uses so the two paths
+     * stay in perfect lock-step). Unlike the SensorGenerator ticker, this
+     * is a single static snapshot: no motion, no sweep.
+     *
+     * <p>Layout: 9 core rows always visible, FOV lives in a collapsed
+     * {@link TitledPane} so operators who don't need FOV see the same
+     * dialog they always did.
+     */
     public static Optional<SapientMessage> statusReport(String nodeId) {
         Dialog<SapientMessage> d = base("Send StatusReport");
-        GridPane g = Forms.grid();
 
+        // --- Core fields (unchanged) ---
         TextField nodeIdField = new TextField(nodeId);
         ChoiceBox<StatusReport.System> systemBox = new ChoiceBox<>();
         for (StatusReport.System s : StatusReport.System.values()) {
@@ -173,30 +195,105 @@ public final class MessageDialogs {
         powerStatBox.setValue(StatusReport.PowerStatus.POWERSTATUS_OK);
         Spinner<Integer> batterySpinner = intSpinner(0, 100, 87);
 
-        Forms.addRow(g, 0, "node_id:", nodeIdField);
-        Forms.addRow(g, 1, "system:", systemBox);
-        Forms.addRow(g, 2, "mode:", modeField);
-        Forms.addRow(g, 3, "latitude:", latField);
-        Forms.addRow(g, 4, "longitude:", lonField);
-        Forms.addRow(g, 5, "altitude:", altField);
-        Forms.addRow(g, 6, "power source:", powerSrcBox);
-        Forms.addRow(g, 7, "power status:", powerStatBox);
-        Forms.addRow(g, 8, "battery %:", batterySpinner);
-        d.getDialogPane().setContent(g);
+        GridPane coreG = Forms.grid();
+        Forms.addRow(coreG, 0, "node_id:", nodeIdField);
+        Forms.addRow(coreG, 1, "system:", systemBox);
+        Forms.addRow(coreG, 2, "mode:", modeField);
+        Forms.addRow(coreG, 3, "latitude:", latField);
+        Forms.addRow(coreG, 4, "longitude:", lonField);
+        Forms.addRow(coreG, 5, "altitude:", altField);
+        Forms.addRow(coreG, 6, "power source:", powerSrcBox);
+        Forms.addRow(coreG, 7, "power status:", powerStatBox);
+        Forms.addRow(coreG, 8, "battery %:", batterySpinner);
+
+        // --- Optional FOV attachment ---
+        // Defaults model a stationary rotating-radar snapshot pointing
+        // east: 90° boresight, 5° elevation, 5000 m range, 30° horizontal
+        // beam, 15° vertical beam, TRUE north datum. Match the
+        // SensorGenerator dialog defaults so ops build one mental model.
+        ChoiceBox<StatusFovMode> fovModeBox = new ChoiceBox<>();
+        fovModeBox.getItems().addAll(StatusFovMode.values());
+        fovModeBox.setValue(StatusFovMode.NONE);
+        Spinner<Double> fovAzSpinner = doubleSpinner(0.0, 360.0, 90.0, 5.0);
+        Spinner<Double> fovElSpinner = doubleSpinner(-90.0, 90.0, 5.0, 1.0);
+        Spinner<Double> fovRangeSpinner = doubleSpinner(10.0, 200_000.0, 5000.0, 100.0);
+        Spinner<Double> fovHExtSpinner = doubleSpinner(0.1, 360.0, 30.0, 1.0);
+        Spinner<Double> fovVExtSpinner = doubleSpinner(0.1, 180.0, 15.0, 1.0);
+        ChoiceBox<RangeBearingDatum> fovDatumBox = new ChoiceBox<>();
+        fovDatumBox.getItems().addAll(
+                RangeBearingDatum.RANGE_BEARING_DATUM_TRUE,
+                RangeBearingDatum.RANGE_BEARING_DATUM_MAGNETIC,
+                RangeBearingDatum.RANGE_BEARING_DATUM_GRID,
+                RangeBearingDatum.RANGE_BEARING_DATUM_PLATFORM);
+        fovDatumBox.setValue(RangeBearingDatum.RANGE_BEARING_DATUM_TRUE);
+        Spinner<Integer> fovPolyVertsSpinner = intSpinner(3, 24, 8);
+
+        GridPane fovG = Forms.grid();
+        Forms.addRow(fovG, 0, "FOV mode:", fovModeBox);
+        Forms.addRow(fovG, 1, "boresight azimuth (°):", fovAzSpinner);
+        Forms.addRow(fovG, 2, "boresight elevation (°):", fovElSpinner);
+        Forms.addRow(fovG, 3, "range (m):", fovRangeSpinner);
+        Forms.addRow(fovG, 4, "horizontal extent (°):", fovHExtSpinner);
+        Forms.addRow(fovG, 5, "vertical extent (°):", fovVExtSpinner);
+        Forms.addRow(fovG, 6, "datum:", fovDatumBox);
+        Forms.addRow(fovG, 7, "polygon vertices (POLYGON only):", fovPolyVertsSpinner);
+        TitledPane fovPane = new TitledPane("Optional field of view", fovG);
+        fovPane.setExpanded(false);   // hidden by default: dialog looks unchanged
+
+        VBoxWrapper content = new VBoxWrapper(coreG, fovPane);
+        d.getDialogPane().setContent(content);
 
         d.setResultConverter(bt -> {
             if (bt != ButtonType.OK) return null;
             Double alt = parseDoubleOrNull(altField.getText());
+            double lat = Double.parseDouble(latField.getText());
+            double lon = Double.parseDouble(lonField.getText());
+
+            LocationOrRangeBearing fov = null;
+            StatusFovMode mode = fovModeBox.getValue();
+            if (mode == StatusFovMode.CONE) {
+                RangeBearingCone cone = MessageFactory.cone(
+                        fovAzSpinner.getValue(),
+                        fovElSpinner.getValue(),
+                        fovRangeSpinner.getValue(),
+                        fovHExtSpinner.getValue(),
+                        fovVExtSpinner.getValue(),
+                        fovDatumBox.getValue());
+                fov = MessageFactory.fovCone(cone);
+            } else if (mode == StatusFovMode.POLYGON) {
+                java.util.List<double[]> vertices = SensorGeometry.projectConeFootprint(
+                        lat, lon,
+                        fovAzSpinner.getValue(),
+                        fovHExtSpinner.getValue(),
+                        fovRangeSpinner.getValue(),
+                        fovPolyVertsSpinner.getValue());
+                LocationList poly = MessageFactory.polygon(vertices, alt);
+                fov = MessageFactory.fovPolygon(poly);
+            }
+
+            // FOV=NONE routes through the pre-existing 9-arg factory so the
+            // wire shape is byte-identical to the old behaviour — no risk
+            // of an accidental empty-FOV block leaking onto old receivers.
+            if (fov == null) {
+                return MessageFactory.statusReport(
+                        nodeIdField.getText(),
+                        systemBox.getValue(),
+                        modeField.getText(),
+                        lat, lon, alt,
+                        powerSrcBox.getValue(),
+                        powerStatBox.getValue(),
+                        batterySpinner.getValue());
+            }
             return MessageFactory.statusReport(
                     nodeIdField.getText(),
                     systemBox.getValue(),
+                    StatusReport.Info.INFO_NEW,
                     modeField.getText(),
-                    Double.parseDouble(latField.getText()),
-                    Double.parseDouble(lonField.getText()),
-                    alt,
+                    lat, lon, alt,
                     powerSrcBox.getValue(),
                     powerStatBox.getValue(),
-                    batterySpinner.getValue());
+                    batterySpinner.getValue(),
+                    fov);
         });
         return d.showAndWait();
     }
