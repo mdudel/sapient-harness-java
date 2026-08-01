@@ -6,6 +6,7 @@ package com.mdudel.sapient.ui.dialog;
 
 import com.mdudel.sapient.core.factory.MessageFactory;
 import com.mdudel.sapient.core.gen.DetectionGenerator;
+import com.mdudel.sapient.core.gen.SensorGenerator;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.ButtonType;
@@ -273,6 +274,129 @@ public final class MessageDialogs {
                     vertRateSpinner.getValue(),
                     minAltSpinner.getValue(),
                     maxAltSpinner.getValue());
+        });
+        return d.showAndWait();
+    }
+
+    // ---------- Sensor generator ----------
+    /**
+     * Returns a {@link SensorGenerator.Config} for the caller to hand to a
+     * {@link SensorGenerator} instance. Sibling to
+     * {@link #detectionGenerator(String)} — sensor generator emits a stream
+     * of {@code StatusReport} heartbeats with a live-updating field of view
+     * (either a swept cone or its ground polygon projection) so the receiver
+     * can render the sensor's live coverage lobe.
+     */
+    public static Optional<SensorGenerator.Config> sensorGenerator(String nodeId) {
+        Dialog<SensorGenerator.Config> d = base("Start Sensor Generator");
+        GridPane g = Forms.grid();
+
+        // Identity + cadence
+        TextField nodeIdField = new TextField(nodeId);
+        Spinner<Integer> tickSpinner = intSpinner(50, 60_000, 1000);
+
+        // Platform position
+        TextField latField = new TextField(String.valueOf(DEFAULT_LAT));
+        TextField lonField = new TextField(String.valueOf(DEFAULT_LON));
+        Spinner<Double> altSpinner = doubleSpinner(0.0, 20_000.0, 100.0, 10.0);
+
+        // Motion
+        CheckBox movingBox = new CheckBox("Moving platform");
+        movingBox.setSelected(false);
+        Spinner<Double> speedSpinner = doubleSpinner(0.0, 500.0, 5.0, 0.5);
+        Spinner<Integer> turnJitterSpinner = intSpinner(0, 180, 5);
+        Spinner<Integer> motionRadiusSpinner = intSpinner(10, 100_000, 2000);
+
+        // FOV mode
+        ChoiceBox<SensorGenerator.FovMode> fovModeBox = new ChoiceBox<>();
+        fovModeBox.getItems().addAll(SensorGenerator.FovMode.values());
+        fovModeBox.setValue(SensorGenerator.FovMode.CONE);
+
+        // Cone / shared FOV geometry. Default: rotating radar dish at ~5 RPM
+        // (30 deg/sec CW), 30 deg horizontal beam, 15 deg vertical beam,
+        // 5000 m range, boresight elevation 5 deg (looking slightly upward
+        // for airborne tracks), no elevation nod.
+        Spinner<Double> initAzSpinner = doubleSpinner(0.0, 360.0, 0.0, 5.0);
+        Spinner<Double> azRateSpinner = doubleSpinner(-360.0, 360.0, 30.0, 5.0);
+        Spinner<Double> initElSpinner = doubleSpinner(-90.0, 90.0, 5.0, 1.0);
+        Spinner<Double> elMinSpinner = doubleSpinner(-90.0, 90.0, 0.0, 1.0);
+        Spinner<Double> elMaxSpinner = doubleSpinner(-90.0, 90.0, 30.0, 1.0);
+        Spinner<Double> elRateSpinner = doubleSpinner(0.0, 90.0, 0.0, 1.0);
+        Spinner<Double> rangeSpinner = doubleSpinner(10.0, 200_000.0, 5000.0, 100.0);
+        Spinner<Double> hExtentSpinner = doubleSpinner(0.1, 360.0, 30.0, 1.0);
+        Spinner<Double> vExtentSpinner = doubleSpinner(0.1, 180.0, 15.0, 1.0);
+
+        // Polygon-only
+        Spinner<Integer> polyVertsSpinner = intSpinner(3, 24, 8);
+
+        // Status housekeeping
+        ChoiceBox<StatusReport.System> systemBox = new ChoiceBox<>();
+        for (StatusReport.System s : StatusReport.System.values()) {
+            if (s == StatusReport.System.UNRECOGNIZED) continue;
+            systemBox.getItems().add(s);
+        }
+        systemBox.setValue(StatusReport.System.SYSTEM_OK);
+        TextField modeField = new TextField("scanning");
+        Spinner<Integer> batteryInitSpinner = intSpinner(0, 100, 100);
+        Spinner<Double> batteryDrainSpinner = doubleSpinner(0.0, 100.0, 0.0, 0.1);
+
+        int row = 0;
+        Forms.addRow(g, row++, "node_id:", nodeIdField);
+        Forms.addRow(g, row++, "tick rate (ms):", tickSpinner);
+        Forms.addRow(g, row++, "sensor latitude:", latField);
+        Forms.addRow(g, row++, "sensor longitude:", lonField);
+        Forms.addRow(g, row++, "sensor altitude (m):", altSpinner);
+        Forms.addRow(g, row++, "platform:", movingBox);
+        Forms.addRow(g, row++, "platform speed (m/s):", speedSpinner);
+        Forms.addRow(g, row++, "platform turn jitter (°):", turnJitterSpinner);
+        Forms.addRow(g, row++, "platform corral radius (m):", motionRadiusSpinner);
+        Forms.addRow(g, row++, "FOV mode:", fovModeBox);
+        Forms.addRow(g, row++, "initial azimuth (°):", initAzSpinner);
+        Forms.addRow(g, row++, "azimuth rate (°/s, +CW / -CCW):", azRateSpinner);
+        Forms.addRow(g, row++, "initial elevation (°):", initElSpinner);
+        Forms.addRow(g, row++, "elevation min (°):", elMinSpinner);
+        Forms.addRow(g, row++, "elevation max (°):", elMaxSpinner);
+        Forms.addRow(g, row++, "elevation nod rate (°/s):", elRateSpinner);
+        Forms.addRow(g, row++, "range (m):", rangeSpinner);
+        Forms.addRow(g, row++, "horizontal extent (°):", hExtentSpinner);
+        Forms.addRow(g, row++, "vertical extent (°):", vExtentSpinner);
+        Forms.addRow(g, row++, "polygon vertices (POLYGON only):", polyVertsSpinner);
+        Forms.addRow(g, row++, "system:", systemBox);
+        Forms.addRow(g, row++, "mode:", modeField);
+        Forms.addRow(g, row++, "initial battery (%):", batteryInitSpinner);
+        Forms.addRow(g, row++, "battery drain (%/min, 0=off):", batteryDrainSpinner);
+        d.getDialogPane().setContent(g);
+
+        d.setResultConverter(bt -> {
+            if (bt != ButtonType.OK) return null;
+            Double drain = batteryDrainSpinner.getValue() > 0
+                    ? batteryDrainSpinner.getValue() : null;
+            return new SensorGenerator.Config(
+                    nodeIdField.getText(),
+                    tickSpinner.getValue(),
+                    Double.parseDouble(latField.getText()),
+                    Double.parseDouble(lonField.getText()),
+                    altSpinner.getValue(),
+                    movingBox.isSelected(),
+                    speedSpinner.getValue(),
+                    turnJitterSpinner.getValue(),
+                    motionRadiusSpinner.getValue(),
+                    fovModeBox.getValue(),
+                    initAzSpinner.getValue(),
+                    azRateSpinner.getValue(),
+                    initElSpinner.getValue(),
+                    elMinSpinner.getValue(),
+                    elMaxSpinner.getValue(),
+                    elRateSpinner.getValue(),
+                    rangeSpinner.getValue(),
+                    hExtentSpinner.getValue(),
+                    vExtentSpinner.getValue(),
+                    polyVertsSpinner.getValue(),
+                    systemBox.getValue(),
+                    modeField.getText().trim().isEmpty() ? "scanning"
+                            : modeField.getText().trim(),
+                    batteryInitSpinner.getValue(),
+                    drain);
         });
         return d.showAndWait();
     }

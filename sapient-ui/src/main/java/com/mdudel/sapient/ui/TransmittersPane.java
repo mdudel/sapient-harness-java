@@ -5,6 +5,7 @@
 package com.mdudel.sapient.ui;
 
 import com.mdudel.sapient.core.gen.DetectionGenerator;
+import com.mdudel.sapient.core.gen.SensorGenerator;
 import com.mdudel.sapient.core.template.MessageTemplateLoader;
 import com.mdudel.sapient.net.SapientMessageListener;
 import com.mdudel.sapient.net.SapientTransmitter;
@@ -66,6 +67,7 @@ public final class TransmittersPane extends BorderPane {
         REGISTRATION_ACK("RegistrationAck"),
         STATUS_REPORT("StatusReport"),
         DETECTION_GENERATOR("Detection Report (generator…)"),
+        SENSOR_GENERATOR("Sensor status (generator…)"),
         TASK("Task"),
         TASK_ACK("TaskAck"),
         ALERT("Alert"),
@@ -80,6 +82,8 @@ public final class TransmittersPane extends BorderPane {
     private final ObservableList<TxRow> rows = FXCollections.observableArrayList();
     private final Map<String, SapientTransmitter> live = new HashMap<>();
     private final Map<String, DetectionGenerator> generators = new HashMap<>();
+    /** Parallel to {@code generators}: one sensor generator per transmitter row. */
+    private final Map<String, SensorGenerator> sensorGenerators = new HashMap<>();
     private final ObservableList<String> stream = FXCollections.observableArrayList();
 
     /**
@@ -151,7 +155,7 @@ public final class TransmittersPane extends BorderPane {
         Button quickRegBtn = Icons.iconButton(Feather.ZAP,
                 "Quick send: minimal Registration with no dialog (smoke test)");
         Button stopGenBtn = Icons.dangerIconButton(Feather.SQUARE,
-                "Stop the detection generator running on the selected transmitter");
+                "Stop ALL generators (detection + sensor) running on the selected transmitter");
         // Ditto: don't steal focus from the table selection.
         sendBtn.setFocusTraversable(false);
         quickRegBtn.setFocusTraversable(false);
@@ -218,18 +222,28 @@ public final class TransmittersPane extends BorderPane {
             handleSend(row, type);
         });
 
-        // Stop the detection generator on the selected transmitter (if any).
+        // Stop ALL generators (detection + sensor) on the selected transmitter.
+        // Broadened 2026-08-01 when the sensor generator landed; single stop
+        // button halts both kinds so the operator doesn't have to remember
+        // which is running. Silent-no-op is fine when nothing's running.
         stopGenBtn.setOnAction(e -> {
             TxRow row = table.getSelectionModel().getSelectedItem();
             if (row == null) {
                 append(null, "! no transmitter selected");
                 return;
             }
-            if (!row.generating.get()) {
-                append(row, "! no detection generator is running on this transmitter");
-                return;
+            boolean anythingStopped = false;
+            if (row.generating.get()) {
+                stopGenerator(row);
+                anythingStopped = true;
             }
-            stopGenerator(row);
+            if (sensorGenerators.containsKey(row.name.get())) {
+                stopSensorGenerator(row);
+                anythingStopped = true;
+            }
+            if (!anythingStopped) {
+                append(row, "! no generators (detection or sensor) running on this transmitter");
+            }
         });
 
         // Quick send: pre-canned minimal Registration for smoke tests
@@ -255,6 +269,7 @@ public final class TransmittersPane extends BorderPane {
             case REGISTRATION_ACK  -> withMsg(row, MessageDialogs.registrationAck(nodeId));
             case STATUS_REPORT     -> withMsg(row, MessageDialogs.statusReport(nodeId));
             case DETECTION_GENERATOR -> startGenerator(row);
+            case SENSOR_GENERATOR  -> startSensorGenerator(row);
             case TASK              -> withMsg(row, MessageDialogs.task(nodeId));
             case TASK_ACK          -> withMsg(row, MessageDialogs.taskAck(nodeId));
             case ALERT             -> withMsg(row, MessageDialogs.alert(nodeId));
@@ -349,6 +364,72 @@ public final class TransmittersPane extends BorderPane {
         }
     }
 
+    // ---------- Sensor generator lifecycle ----------
+
+    /**
+     * Start a {@link SensorGenerator} on the given row after prompting for
+     * config. Mirrors {@link #startGenerator} but for StatusReport / FOV
+     * ticks rather than DetectionReports. Idempotent: refuses to start a
+     * second sensor generator on a row that already has one — the operator
+     * has to stop the running one first.
+     */
+    private void startSensorGenerator(TxRow row) {
+        SapientTransmitter tx = live.get(row.name.get());
+        if (tx == null || !tx.isConnected()) {
+            append(row, "! not connected — click Connect first");
+            return;
+        }
+        if (sensorGenerators.containsKey(row.name.get())) {
+            append(row, "! sensor generator already running — stop it first");
+            return;
+        }
+        Optional<SensorGenerator.Config> cfgOpt =
+                MessageDialogs.sensorGenerator(row.nodeId);
+        if (cfgOpt.isEmpty()) return;
+        SensorGenerator.Config cfg = cfgOpt.get();
+
+        SensorGenerator sensor = new SensorGenerator(cfg, msg -> {
+            try {
+                tx.send(msg);
+                Platform.runLater(() -> {
+                    row.sent.set(row.sent.get() + 1);
+                    if (row.sent.get() % 10 == 0) {
+                        append(row, "⇒ sensor sent " + row.sent.get() + " status reports");
+                    }
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> append(row,
+                        "! sensor generator send failed: " + ex.getMessage()));
+            }
+        });
+        sensorGenerators.put(row.name.get(), sensor);
+        sensor.start();
+        // Activity chip uses a distinct emoji so the operator can eyeball
+        // WHICH generator is running when a row has both.
+        String fovLabel = cfg.fovMode == SensorGenerator.FovMode.CONE ? "cone" : "polygon";
+        row.activity.set(String.format("📡 sensor: %s FOV, %.0f°/s az, %.0f m range @ %d ms%s",
+                fovLabel, cfg.azimuthRateDegPerSec, cfg.rangeMeters, cfg.tickMs,
+                cfg.moving ? " (moving)" : ""));
+        append(row, "📡 started sensor generator: " + fovLabel
+                + " FOV, az " + cfg.initialAzimuthDeg + "° rotating "
+                + cfg.azimuthRateDegPerSec + "°/s, range " + cfg.rangeMeters + " m"
+                + (cfg.moving ? ", moving platform" : ", stationary"));
+    }
+
+    private void stopSensorGenerator(TxRow row) {
+        SensorGenerator sensor = sensorGenerators.remove(row.name.get());
+        if (sensor != null) {
+            sensor.stop();
+            // Only clear the activity chip if the detection generator is
+            // ALSO not running — the chip is single-slot so we don't want to
+            // wipe a still-running detection generator's label.
+            if (!row.generating.get()) {
+                row.activity.set("");
+            }
+            append(row, "■ stopped sensor generator");
+        }
+    }
+
     // ---------- Connect / disconnect ----------
 
     private void connect(TxRow row) {
@@ -392,7 +473,10 @@ public final class TransmittersPane extends BorderPane {
 
     private void disconnect(TxRow row) {
         if (row == null) return;
-        stopGenerator(row); // stop generator first so we don't try to send on a dead socket
+        // Stop BOTH generator types first so we don't try to send on a dead
+        // socket. Extended 2026-08-01 when sensor generator landed.
+        stopGenerator(row);
+        stopSensorGenerator(row);
         SapientTransmitter tx = live.remove(row.name.get());
         if (tx != null) new Thread(tx::close, "disconnect-" + row.name.get()).start();
     }
@@ -651,6 +735,10 @@ public final class TransmittersPane extends BorderPane {
             try { gen.stop(); } catch (Exception ignored) { }
         }
         generators.clear();
+        for (SensorGenerator sg : sensorGenerators.values()) {
+            try { sg.stop(); } catch (Exception ignored) { }
+        }
+        sensorGenerators.clear();
         for (SapientTransmitter tx : live.values()) {
             try { tx.close(); } catch (Exception ignored) { }
         }

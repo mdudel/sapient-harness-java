@@ -11,7 +11,6 @@ import uk.gov.dstl.sapientmsg.bsiflex335v2.SapientMessage;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
-import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -153,6 +152,8 @@ public final class DetectionGenerator implements AutoCloseable {
         double lon;
         double headingRad;   // 0 = north, increases clockwise (like a compass)
         double altM;         // current altitude in metres, WGS84 (Location.z)
+        /** Scratch State reused every tick to feed MotionModel.step. */
+        final MotionModel.State motion = new MotionModel.State(0, 0, 0);
 
         Track(double lat, double lon, double headingRad, double altM) {
             this.lat = lat;
@@ -245,33 +246,25 @@ public final class DetectionGenerator implements AutoCloseable {
     /** One periodic tick — advances motion (if enabled) then emits detections. */
     private void tick() {
         try {
-            double moveMeters = config.moving
-                    ? config.speedMps * (config.tickMs / 1000.0)
-                    : 0.0;
+            double dtSeconds = config.tickMs / 1000.0;
+            MotionModel.Params motionParams = new MotionModel.Params(
+                    config.centerLat, config.centerLon, config.radiusMeters,
+                    config.speedMps, config.turnJitterDeg);
 
             for (Track tr : tracks) {
                 if (config.moving) {
-                    // Jitter the heading
-                    double jitterRad = Math.toRadians(
-                            (rnd.nextDouble() * 2.0 - 1.0) * config.turnJitterDeg);
-                    tr.headingRad += jitterRad;
-
-                    // Corral runaway tracks: if outside 3x radius, nudge back toward center
-                    double distFromCenter = Geo.distanceMeters(
-                            config.centerLat, config.centerLon, tr.lat, tr.lon);
-                    if (distFromCenter > config.radiusMeters * 3) {
-                        double bearingToCenter = Geo.bearingRadians(
-                                tr.lat, tr.lon, config.centerLat, config.centerLon);
-                        // Blend heading 30% toward center each tick when out-of-bounds
-                        tr.headingRad = angleLerp(tr.headingRad, bearingToCenter, 0.30);
-                    }
-
-                    // Advance: heading is a compass bearing (0 = north, CW)
-                    double dEast = moveMeters * Math.sin(tr.headingRad);
-                    double dNorth = moveMeters * Math.cos(tr.headingRad);
-                    double[] newP = Geo.offset(tr.lat, tr.lon, dEast, dNorth);
-                    tr.lat = newP[0];
-                    tr.lon = newP[1];
+                    // Shared motion model (extracted 2026-08-01 so
+                    // SensorGenerator can share the exact same physics).
+                    // Behaviour byte-equivalent to the pre-refactor inline
+                    // code: heading jitter, 3x-radius corral, great-circle
+                    // offset, compass-bearing convention (0=N, CW).
+                    tr.motion.lat = tr.lat;
+                    tr.motion.lon = tr.lon;
+                    tr.motion.headingRad = tr.headingRad;
+                    MotionModel.step(tr.motion, motionParams, dtSeconds, rnd);
+                    tr.lat = tr.motion.lat;
+                    tr.lon = tr.motion.lon;
+                    tr.headingRad = tr.motion.headingRad;
                 }
 
                 // Vertical drift each tick (independent of horizontal motion).
@@ -280,7 +273,7 @@ public final class DetectionGenerator implements AutoCloseable {
                 // charts without needing full 3D motion.
                 if (config.verticalRateMps > 0) {
                     double dAlt = (rnd.nextDouble() * 2.0 - 1.0)
-                            * config.verticalRateMps * (config.tickMs / 1000.0);
+                            * config.verticalRateMps * dtSeconds;
                     tr.altM = clampAltitude(tr.altM + dAlt);
                 }
 
@@ -307,12 +300,6 @@ public final class DetectionGenerator implements AutoCloseable {
             // Swallow so ScheduledExecutorService doesn't silently kill future ticks.
             // Real listeners are already error-handled by sinks; this is belt-and-braces.
         }
-    }
-
-    /** Interpolate between two angles the short way around. */
-    private static double angleLerp(double a, double b, double t) {
-        double diff = Math.atan2(Math.sin(b - a), Math.cos(b - a));
-        return a + diff * t;
     }
 
     /**

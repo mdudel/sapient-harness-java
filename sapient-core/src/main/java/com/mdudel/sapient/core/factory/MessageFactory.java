@@ -12,6 +12,11 @@ import uk.gov.dstl.sapientmsg.bsiflex335v2.DetectionReport;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.Location;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.LocationCoordinateSystem;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.LocationDatum;
+import uk.gov.dstl.sapientmsg.bsiflex335v2.LocationList;
+import uk.gov.dstl.sapientmsg.bsiflex335v2.LocationOrRangeBearing;
+import uk.gov.dstl.sapientmsg.bsiflex335v2.RangeBearingCone;
+import uk.gov.dstl.sapientmsg.bsiflex335v2.RangeBearingCoordinateSystem;
+import uk.gov.dstl.sapientmsg.bsiflex335v2.RangeBearingDatum;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.Registration;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.RegistrationAck;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.SapientMessage;
@@ -86,6 +91,55 @@ public final class MessageFactory {
         return b.build();
     }
 
+    // ----- Field-of-view helpers -----------------------------------------
+
+    /**
+     * Build a {@link RangeBearingCone} FOV pinned to decimal-degrees + metres,
+     * with the given datum (TRUE for a stationary sensor, PLATFORM for a
+     * moving-platform sensor whose azimuth is relative to platform heading).
+     * All angular values in degrees; range in metres.
+     */
+    public static RangeBearingCone cone(double azimuthDeg, double elevationDeg,
+                                         double rangeMeters,
+                                         double horizontalExtentDeg,
+                                         double verticalExtentDeg,
+                                         RangeBearingDatum datum) {
+        return RangeBearingCone.newBuilder()
+                .setAzimuth(azimuthDeg)
+                .setElevation(elevationDeg)
+                .setRange(rangeMeters)
+                .setHorizontalExtent(horizontalExtentDeg)
+                .setVerticalExtent(verticalExtentDeg)
+                .setCoordinateSystem(RangeBearingCoordinateSystem
+                        .RANGE_BEARING_COORDINATE_SYSTEM_DEGREES_M)
+                .setDatum(datum == null ? RangeBearingDatum.RANGE_BEARING_DATUM_TRUE : datum)
+                .build();
+    }
+
+    /** Wrap a {@link RangeBearingCone} in the FOV oneof carrier. */
+    public static LocationOrRangeBearing fovCone(RangeBearingCone cone) {
+        return LocationOrRangeBearing.newBuilder().setRangeBearing(cone).build();
+    }
+
+    /**
+     * Build a {@link LocationList} FOV from a list of (lat, lon) vertices.
+     * Altitude is set to the sensor's platform altitude for all vertices so a
+     * receiver drawing the polygon on a globe puts it at the right height
+     * (surface-projected footprints look right when altM=0 or ground level).
+     */
+    public static LocationList polygon(List<double[]> latLonVertices, Double altMeters) {
+        LocationList.Builder b = LocationList.newBuilder();
+        for (double[] p : latLonVertices) {
+            b.addLocations(latLon(p[0], p[1], altMeters));
+        }
+        return b.build();
+    }
+
+    /** Wrap a {@link LocationList} in the FOV oneof carrier. */
+    public static LocationOrRangeBearing fovPolygon(LocationList polygon) {
+        return LocationOrRangeBearing.newBuilder().setLocationList(polygon).build();
+    }
+
     // ----- Message-type factories -----------------------------------------
 
     /** Minimum-valid Registration. Fills all mandatory arrays with one entry each. */
@@ -152,10 +206,33 @@ public final class MessageFactory {
                                               StatusReport.PowerSource powerSource,
                                               StatusReport.PowerStatus powerStatus,
                                               Integer batteryLevel) {
+        return statusReport(nodeId, system, StatusReport.Info.INFO_NEW, mode,
+                latDeg, lonDeg, altMeters,
+                powerSource, powerStatus, batteryLevel,
+                null);
+    }
+
+    /**
+     * StatusReport overload with an explicit {@link StatusReport.Info} flag
+     * and an optional {@code fieldOfView}. The sensor generator uses this so
+     * it can send {@code INFO_NEW} on the first tick and {@code INFO_UNCHANGED}
+     * thereafter (per SAPIENT semantics — receivers use Info to know when to
+     * re-render vs. treat as a heartbeat), and to attach a live-updating FOV
+     * cone or polygon on every heartbeat.
+     */
+    public static SapientMessage statusReport(String nodeId,
+                                              StatusReport.System system,
+                                              StatusReport.Info info,
+                                              String mode,
+                                              Double latDeg, Double lonDeg, Double altMeters,
+                                              StatusReport.PowerSource powerSource,
+                                              StatusReport.PowerStatus powerStatus,
+                                              Integer batteryLevel,
+                                              LocationOrRangeBearing fieldOfView) {
         StatusReport.Builder sr = StatusReport.newBuilder()
                 .setReportId(newUlid())
                 .setSystem(system == null ? StatusReport.System.SYSTEM_OK : system)
-                .setInfo(StatusReport.Info.INFO_NEW)
+                .setInfo(info == null ? StatusReport.Info.INFO_NEW : info)
                 .setMode(mode == null ? "default" : mode);
         if (latDeg != null && lonDeg != null) {
             sr.setNodeLocation(latLon(latDeg, lonDeg, altMeters));
@@ -166,6 +243,9 @@ public final class MessageFactory {
             if (powerStatus != null) p.setStatus(powerStatus);
             if (batteryLevel != null) p.setLevel(batteryLevel);
             sr.setPower(p.build());
+        }
+        if (fieldOfView != null) {
+            sr.setFieldOfView(fieldOfView);
         }
         return SapientMessage.newBuilder()
                 .setTimestamp(now())
