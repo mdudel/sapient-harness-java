@@ -222,6 +222,18 @@ public final class MessageDialogs {
         classCombo.setEditable(true);
         classCombo.setValue("person");
         Spinner<Double> confSpinner = doubleSpinner(0.0, 1.0, 0.85, 0.05);
+        // Altitude / vertical motion (SAPIENT Location.z, metres, WGS84).
+        // Defaults chosen for Wiesbaden: ground ≈ 110 m MSL, so 150 m base
+        // with a ±50 m spread puts tracks 100–200 m above sea level (≈40–140 m
+        // AGL locally). minAltitudeM=0 keeps everything non-negative even if
+        // the operator dials wilder jitter; "floor above ground" defaults to
+        // 100 m so a bare-defaults run mimics slow drones circling. Ceiling
+        // 0 = unbounded above.
+        Spinner<Double> initAltSpinner = doubleSpinner(0.0, 20_000.0, 150.0, 10.0);
+        Spinner<Double> altJitterSpinner = doubleSpinner(0.0, 5_000.0, 50.0, 5.0);
+        Spinner<Double> vertRateSpinner = doubleSpinner(0.0, 100.0, 0.0, 0.5);
+        Spinner<Double> minAltSpinner = doubleSpinner(0.0, 20_000.0, 100.0, 10.0);
+        Spinner<Double> maxAltSpinner = doubleSpinner(0.0, 30_000.0, 0.0, 100.0);
 
         int row = 0;
         Forms.addRow(g, row++, "node_id:", nodeIdField);
@@ -233,6 +245,11 @@ public final class MessageDialogs {
         Forms.addRow(g, row++, "motion:", movingBox);
         Forms.addRow(g, row++, "speed (m/s):", speedSpinner);
         Forms.addRow(g, row++, "turn jitter (°):", turnJitterSpinner);
+        Forms.addRow(g, row++, "initial altitude (m):", initAltSpinner);
+        Forms.addRow(g, row++, "altitude jitter (± m):", altJitterSpinner);
+        Forms.addRow(g, row++, "vertical rate (m/s):", vertRateSpinner);
+        Forms.addRow(g, row++, "floor (min alt, m):", minAltSpinner);
+        Forms.addRow(g, row++, "ceiling (max alt, m; 0=none):", maxAltSpinner);
         Forms.addRow(g, row++, "classification:", classCombo);
         Forms.addRow(g, row++, "confidence:", confSpinner);
         d.getDialogPane().setContent(g);
@@ -250,7 +267,12 @@ public final class MessageDialogs {
                     speedSpinner.getValue(),
                     turnJitterSpinner.getValue(),
                     classCombo.getValue() == null ? "unknown" : classCombo.getValue().trim(),
-                    confSpinner.getValue().floatValue());
+                    confSpinner.getValue().floatValue(),
+                    initAltSpinner.getValue(),
+                    altJitterSpinner.getValue(),
+                    vertRateSpinner.getValue(),
+                    minAltSpinner.getValue(),
+                    maxAltSpinner.getValue());
         });
         return d.showAndWait();
     }

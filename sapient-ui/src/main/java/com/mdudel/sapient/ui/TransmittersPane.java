@@ -319,10 +319,24 @@ public final class TransmittersPane extends BorderPane {
         row.generating.set(true);
         // Prefix with an emoji so the cell contents change visibly even if
         // the inline stop-icon renderer misfires on some JavaFX versions.
-        row.activity.set(String.format("▶ generating: %d tracks @ %d ms%s",
-                cfg.trackCount, cfg.tickMs, cfg.moving ? " (moving)" : ""));
+        // Altitude summary for the activity chip: only include it when the
+        // operator actually dialled altitude in (any of initial / jitter /
+        // vertical rate > 0). Keeps the flat-ground default log lines tidy.
+        String altSummary = "";
+        if (cfg.initialAltitudeM != 0.0 || cfg.altitudeJitterM != 0.0
+                || cfg.verticalRateMps != 0.0) {
+            altSummary = String.format(" alt=%.0f±%.0f m%s",
+                    cfg.initialAltitudeM, cfg.altitudeJitterM,
+                    cfg.verticalRateMps > 0
+                            ? String.format(" ±%.1f m/s", cfg.verticalRateMps)
+                            : "");
+        }
+        row.activity.set(String.format("▶ generating: %d tracks @ %d ms%s%s",
+                cfg.trackCount, cfg.tickMs, cfg.moving ? " (moving)" : "",
+                altSummary));
         append(row, "▶ started detection generator: " + cfg.trackCount
-                + " tracks, " + cfg.tickMs + " ms rate, moving=" + cfg.moving);
+                + " tracks, " + cfg.tickMs + " ms rate, moving=" + cfg.moving
+                + altSummary);
     }
 
     private void stopGenerator(TxRow row) {
