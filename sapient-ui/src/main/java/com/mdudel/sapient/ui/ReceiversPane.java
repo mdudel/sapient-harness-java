@@ -7,6 +7,7 @@ package com.mdudel.sapient.ui;
 import com.mdudel.sapient.core.validation.SapientMessageValidator;
 import com.mdudel.sapient.net.SapientMessageListener;
 import com.mdudel.sapient.net.SapientReceiver;
+import com.mdudel.sapient.ui.dialog.EditDialogs;
 import com.mdudel.sapient.ui.persist.SessionStore;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -48,6 +49,14 @@ public final class ReceiversPane extends BorderPane {
     private final Map<String, SapientReceiver> live = new HashMap<>();
     private final ObservableList<String> stream = FXCollections.observableArrayList();
 
+    /**
+     * Optional persistence hook: invoked whenever the receiver list changes
+     * shape or a row is edited, so the JSON session file stays current
+     * without waiting for window close. Wired by {@code SapientHarnessApp}.
+     * Null-safe — tests / headless bring-up can leave this unset.
+     */
+    private Runnable persistNow = () -> { };
+
     public ReceiversPane() {
         setPadding(new Insets(8));
 
@@ -72,12 +81,18 @@ public final class ReceiversPane extends BorderPane {
         TableColumn<ReceiverRow, String> statusCol = new TableColumn<>("Status");
         statusCol.setCellValueFactory(d -> d.getValue().status);
         statusCol.setPrefWidth(120);
+        // 2026-08-01 (SkyLord): status text is red when the receiver is
+        // NOT running and green when it IS. Uses AtlantaFX 'success' /
+        // 'danger' style classes on the Label so the actual shade follows
+        // whichever theme (Primer / Nord / Cupertino / Dracula ...) is
+        // active — harmonious in every palette.
+        statusCol.setCellFactory(makeStatusCellFactory());
         TableColumn<ReceiverRow, Number> countCol = new TableColumn<>("Received");
         countCol.setCellValueFactory(d -> d.getValue().received);
         countCol.setPrefWidth(100);
         TableColumn<ReceiverRow, Void> actionsCol = new TableColumn<>("Actions");
         actionsCol.setCellFactory(makeActionsCellFactory());
-        actionsCol.setPrefWidth(140);
+        actionsCol.setPrefWidth(170);
         actionsCol.setSortable(false);
         table.getColumns().addAll(nameCol, portCol, statusCol, countCol, actionsCol);
         table.setPrefHeight(220);
@@ -104,8 +119,18 @@ public final class ReceiversPane extends BorderPane {
             table.getSelectionModel().select(newRow);   // <-- auto-select so the next action lands
             nameField.clear();
             portField.clear();
+            persistNow.run();
         });
 
+    }
+
+    /**
+     * Wire a persistence callback. Called whenever a receiver is added,
+     * edited, or removed so the JSON session file mirrors the visible
+     * table without waiting for window close.
+     */
+    public void setPersistNow(Runnable persistNow) {
+        this.persistNow = (persistNow == null) ? () -> { } : persistNow;
     }
 
     // ---------- Per-row actions ----------
@@ -163,6 +188,32 @@ public final class ReceiversPane extends BorderPane {
         SapientReceiver rx = live.remove(row.name.get());
         if (rx != null) rx.stop();
         rows.remove(row);
+        persistNow.run();
+    }
+
+    /**
+     * Open the edit dialog for a row, then — if the user pressed OK — stop
+     * the receiver (if running), apply the new values, and persist. Matches
+     * SkyLord's spec: "saving stops the interface, hit Start when ready".
+     */
+    private void editRow(ReceiverRow row) {
+        if (row == null) return;
+        boolean wasLive = live.containsKey(row.name.get());
+        var editOpt = EditDialogs.editReceiver(row.name.get(), row.port.get(), wasLive);
+        if (editOpt.isEmpty()) return;
+        var edit = editOpt.get();
+
+        // Stop first so the socket is closed before we rename / re-port the row.
+        if (wasLive) stopRow(row);
+
+        // Apply the new values to the row model. Property change fires the
+        // cell listeners so the Name / Port / Status cells repaint.
+        row.name.set(edit.name);
+        row.port.set(edit.port);
+        // Status stays whatever stopRow set it to (typically "stopped").
+        append(row, "✎ edited — name=" + edit.name + " port=" + edit.port
+                + (wasLive ? " (was running, now STOPPED — press Start when ready)" : ""));
+        persistNow.run();
     }
 
     // ---------- Actions column cell factory ----------
@@ -172,6 +223,11 @@ public final class ReceiversPane extends BorderPane {
         return col -> new TableCell<>() {
             private final Button startBtn = Icons.iconButton(Feather.PLAY, "Start this receiver");
             private final Button stopBtn  = Icons.iconButton(Feather.SQUARE, "Stop this receiver");
+            // 2026-08-01 (SkyLord): cog opens the full-property edit dialog.
+            // Saving stops the receiver if it was running — same contract as
+            // the transmitter edit. Sits between stop and remove because
+            // that's the natural reading order (start → stop → edit → remove).
+            private final Button editBtn = Icons.iconButton(Feather.SETTINGS, "Edit — saving stops this receiver");
             private final Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2, "Remove this receiver");
             private final HBox box;
             /** Row we're currently bound to, so we can unhook the listener on rebind. */
@@ -183,11 +239,13 @@ public final class ReceiversPane extends BorderPane {
             {
                 startBtn.setFocusTraversable(false);
                 stopBtn.setFocusTraversable(false);
+                editBtn.setFocusTraversable(false);
                 removeBtn.setFocusTraversable(false);
                 startBtn.getStyleClass().add("flat");
                 stopBtn.getStyleClass().add("flat");
+                editBtn.getStyleClass().add("flat");
                 removeBtn.getStyleClass().add("flat");
-                box = new HBox(4, startBtn, stopBtn, removeBtn);
+                box = new HBox(4, startBtn, stopBtn, editBtn, removeBtn);
                 box.setAlignment(Pos.CENTER_LEFT);
                 startBtn.setOnAction(e -> {
                     ReceiverRow r = getTableView().getItems().get(getIndex());
@@ -196,6 +254,10 @@ public final class ReceiversPane extends BorderPane {
                 stopBtn.setOnAction(e -> {
                     ReceiverRow r = getTableView().getItems().get(getIndex());
                     stopRow(r);
+                });
+                editBtn.setOnAction(e -> {
+                    ReceiverRow r = getTableView().getItems().get(getIndex());
+                    editRow(r);
                 });
                 removeBtn.setOnAction(e -> {
                     ReceiverRow r = getTableView().getItems().get(getIndex());
@@ -236,6 +298,35 @@ public final class ReceiversPane extends BorderPane {
                 row.status.addListener(statusListener);
                 paintStartButton(row.status.get());
                 setGraphic(box);
+            }
+        };
+    }
+
+    /**
+     * Cell factory for the Status column: colours the status text via
+     * AtlantaFX 'success' (green) or 'danger' (red) style classes so it
+     * follows the active theme's palette. Running / listening → green,
+     * anything else → red.
+     */
+    private Callback<TableColumn<ReceiverRow, String>, TableCell<ReceiverRow, String>>
+            makeStatusCellFactory() {
+        return col -> new TableCell<>() {
+            @Override
+            protected void updateItem(String status, boolean empty) {
+                super.updateItem(status, empty);
+                getStyleClass().removeAll("success", "danger");
+                if (empty || status == null) {
+                    setText(null);
+                    return;
+                }
+                setText(status);
+                // "running" is the only running-and-ready state for a receiver.
+                // Every other state ("stopped", "error: ...", "") is not-running.
+                if ("running".equals(status)) {
+                    getStyleClass().add("success");
+                } else {
+                    getStyleClass().add("danger");
+                }
             }
         };
     }

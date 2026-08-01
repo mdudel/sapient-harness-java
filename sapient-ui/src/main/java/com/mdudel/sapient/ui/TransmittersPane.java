@@ -8,6 +8,7 @@ import com.mdudel.sapient.core.gen.DetectionGenerator;
 import com.mdudel.sapient.core.template.MessageTemplateLoader;
 import com.mdudel.sapient.net.SapientMessageListener;
 import com.mdudel.sapient.net.SapientTransmitter;
+import com.mdudel.sapient.ui.dialog.EditDialogs;
 import com.mdudel.sapient.ui.dialog.MessageDialogs;
 import com.mdudel.sapient.ui.persist.SessionStore;
 import javafx.application.Platform;
@@ -81,6 +82,14 @@ public final class TransmittersPane extends BorderPane {
     private final Map<String, DetectionGenerator> generators = new HashMap<>();
     private final ObservableList<String> stream = FXCollections.observableArrayList();
 
+    /**
+     * Optional persistence hook: invoked whenever the transmitter list
+     * changes shape or a row is edited, so the JSON session file stays
+     * current without waiting for window close. Wired by
+     * {@code SapientHarnessApp}. Null-safe.
+     */
+    private Runnable persistNow = () -> { };
+
     public TransmittersPane() {
         setPadding(new Insets(8));
 
@@ -110,6 +119,12 @@ public final class TransmittersPane extends BorderPane {
         TableColumn<TxRow, String> statusCol = new TableColumn<>("Status");
         statusCol.setCellValueFactory(d -> d.getValue().status);
         statusCol.setPrefWidth(120);
+        // 2026-08-01 (SkyLord): status text is red when the transmitter is
+        // NOT connected and green when it IS. Uses AtlantaFX 'success' /
+        // 'danger' style classes on the cell so the actual shade follows
+        // whichever theme (Primer / Nord / Cupertino / Dracula ...) is
+        // active — harmonious in every palette.
+        statusCol.setCellFactory(makeStatusCellFactory());
         TableColumn<TxRow, Number> countCol = new TableColumn<>("Sent");
         countCol.setCellValueFactory(d -> d.getValue().sent);
         countCol.setPrefWidth(70);
@@ -121,7 +136,7 @@ public final class TransmittersPane extends BorderPane {
         activityCol.setCellFactory(makeActivityCellFactory());
         TableColumn<TxRow, Void> actionsCol = new TableColumn<>("Actions");
         actionsCol.setCellFactory(makeActionsCellFactory());
-        actionsCol.setPrefWidth(140);
+        actionsCol.setPrefWidth(170);
         actionsCol.setSortable(false);
         table.getColumns().addAll(nameCol, hostCol, portCol, statusCol, countCol,
                 activityCol, actionsCol);
@@ -187,6 +202,7 @@ public final class TransmittersPane extends BorderPane {
             nameField.clear();
             hostField.clear();
             portField.clear();
+            persistNow.run();
         });
 
 
@@ -367,6 +383,55 @@ public final class TransmittersPane extends BorderPane {
         if (tx != null) new Thread(tx::close, "disconnect-" + row.name.get()).start();
     }
 
+    /**
+     * Wire a persistence callback. Called whenever a transmitter is added,
+     * edited, or removed so the JSON session file mirrors the visible
+     * table without waiting for window close.
+     */
+    public void setPersistNow(Runnable persistNow) {
+        this.persistNow = (persistNow == null) ? () -> { } : persistNow;
+    }
+
+    /**
+     * Open the edit dialog for a row, then — if the user pressed OK —
+     * disconnect the transmitter (if live), apply the new values to the
+     * row model, and persist. Matches SkyLord's spec: "saving stops the
+     * interface, hit Connect when ready".
+     *
+     * <p>Row identity is keyed by name inside the {@code live} and
+     * {@code generators} maps. If the user renamed the row, that's fine
+     * — disconnect happens BEFORE the rename, so we look up the old name.
+     */
+    private void editRow(TxRow row) {
+        if (row == null) return;
+        boolean wasLive = live.containsKey(row.name.get());
+        var editOpt = EditDialogs.editTransmitter(
+                row.name.get(), row.host.get(), row.port.get(), row.nodeId, wasLive);
+        if (editOpt.isEmpty()) return;
+        var edit = editOpt.get();
+
+        // Stop the generator + drop the socket BEFORE renaming so the old
+        // name still resolves in the live/generators maps.
+        stopGenerator(row);
+        if (wasLive) disconnect(row);
+
+        // Note: TxRow.nodeId is final — to persist a new UUID we swap the
+        // row in-place with a fresh instance that carries the new node_id
+        // (preserves position in the table + selection).
+        int idx = rows.indexOf(row);
+        TxRow replacement = new TxRow(edit.name, edit.host, edit.port, edit.nodeId);
+        replacement.status.set("disconnected");
+        if (idx >= 0) {
+            rows.set(idx, replacement);
+        } else {
+            rows.add(replacement);
+        }
+        append(replacement, "✎ edited — name=" + edit.name + " host=" + edit.host
+                + " port=" + edit.port + " nodeId=" + edit.nodeId
+                + (wasLive ? " (was connected, now DISCONNECTED — press Connect when ready)" : ""));
+        persistNow.run();
+    }
+
     // ---------- Actions column: per-row connect / disconnect / remove ----------
 
     private Callback<TableColumn<TxRow, Void>, TableCell<TxRow, Void>>
@@ -376,6 +441,12 @@ public final class TransmittersPane extends BorderPane {
                     "Connect this transmitter");
             private final Button disconnectBtn = Icons.iconButton(Feather.SQUARE,
                     "Disconnect this transmitter");
+            // 2026-08-01 (SkyLord): cog opens the full-property edit dialog.
+            // Saving disconnects the transmitter if it was live — spec:
+            // "saving stops the interface, hit Connect when ready". Sits
+            // between disconnect and remove for reading-order symmetry.
+            private final Button editBtn = Icons.iconButton(Feather.SETTINGS,
+                    "Edit — saving disconnects this transmitter");
             private final Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2,
                     "Remove this transmitter");
             private final HBox box;
@@ -388,11 +459,13 @@ public final class TransmittersPane extends BorderPane {
             {
                 connectBtn.setFocusTraversable(false);
                 disconnectBtn.setFocusTraversable(false);
+                editBtn.setFocusTraversable(false);
                 removeBtn.setFocusTraversable(false);
                 connectBtn.getStyleClass().add("flat");
                 disconnectBtn.getStyleClass().add("flat");
+                editBtn.getStyleClass().add("flat");
                 removeBtn.getStyleClass().add("flat");
-                box = new HBox(4, connectBtn, disconnectBtn, removeBtn);
+                box = new HBox(4, connectBtn, disconnectBtn, editBtn, removeBtn);
                 box.setAlignment(Pos.CENTER_LEFT);
                 connectBtn.setOnAction(e -> {
                     TxRow r = getTableView().getItems().get(getIndex());
@@ -402,11 +475,16 @@ public final class TransmittersPane extends BorderPane {
                     TxRow r = getTableView().getItems().get(getIndex());
                     disconnect(r);
                 });
+                editBtn.setOnAction(e -> {
+                    TxRow r = getTableView().getItems().get(getIndex());
+                    editRow(r);
+                });
                 removeBtn.setOnAction(e -> {
                     TxRow r = getTableView().getItems().get(getIndex());
                     stopGenerator(r);
                     disconnect(r);
                     rows.remove(r);
+                    persistNow.run();
                 });
             }
 
@@ -441,6 +519,33 @@ public final class TransmittersPane extends BorderPane {
                 row.status.addListener(statusListener);
                 paintConnectButton(row.status.get());
                 setGraphic(box);
+            }
+        };
+    }
+
+    /**
+     * Cell factory for the Status column: colours the status text via
+     * AtlantaFX 'success' (green) or 'danger' (red) style classes so it
+     * follows the active theme's palette. "connected" → green,
+     * anything else ("disconnected", "error: ...") → red.
+     */
+    private Callback<TableColumn<TxRow, String>, TableCell<TxRow, String>>
+            makeStatusCellFactory() {
+        return col -> new TableCell<>() {
+            @Override
+            protected void updateItem(String status, boolean empty) {
+                super.updateItem(status, empty);
+                getStyleClass().removeAll("success", "danger");
+                if (empty || status == null) {
+                    setText(null);
+                    return;
+                }
+                setText(status);
+                if ("connected".equals(status)) {
+                    getStyleClass().add("success");
+                } else {
+                    getStyleClass().add("danger");
+                }
             }
         };
     }

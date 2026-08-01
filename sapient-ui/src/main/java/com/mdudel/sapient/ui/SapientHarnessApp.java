@@ -50,6 +50,22 @@ public final class SapientHarnessApp extends Application {
         receivers.restore(saved.receivers);
         transmitters.restore(saved.transmitters);
 
+        // 2026-08-01 (SkyLord): edits + adds + removes should PERSIST
+        // immediately, not wait until window close. This lambda snapshots
+        // both panes + the current theme and writes the JSON session file
+        // — wired to both panes so any mutation triggers a save on the
+        // JavaFX Application thread. Best-effort (SessionStore.save
+        // silent-fails on IO errors so a bad disk never crashes the UI).
+        Runnable persistNow = () -> {
+            SessionStore.Session snap = new SessionStore.Session();
+            snap.receivers = receivers.snapshot();
+            snap.transmitters = transmitters.snapshot();
+            snap.theme = currentTheme;
+            SessionStore.save(snap);
+        };
+        receivers.setPersistNow(persistNow);
+        transmitters.setPersistNow(persistNow);
+
         TabPane tabs = new TabPane();
         tabs.getTabs().add(new Tab("Receivers", receivers));
         tabs.getTabs().add(new Tab("Transmitters", transmitters));
