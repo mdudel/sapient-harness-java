@@ -524,10 +524,21 @@ public final class TransmittersPane extends BorderPane {
     }
 
     /**
-     * Cell factory for the Status column: colours the status text via
-     * AtlantaFX 'success' (green) or 'danger' (red) style classes so it
-     * follows the active theme's palette. "connected" → green,
-     * anything else ("disconnected", "error: ...") → red.
+     * Cell factory for the Status column: colours the status text using the
+     * active AtlantaFX theme's semantic colour variables. "connected" →
+     * {@code -color-success-fg} (green), everything else →
+     * {@code -color-danger-fg} (red).
+     *
+     * <p>AtlantaFX exposes {@code -color-success-*} and {@code -color-danger-*}
+     * as CSS custom properties on the scene root, so binding
+     * {@code -fx-text-fill} to them makes the shade automatically follow
+     * whichever of the 7 themes (Primer / Nord / Cupertino Light+Dark /
+     * Dracula) is active. We pin the colour via inline style rather than a
+     * style class because JavaFX {@code TableCell} does NOT propagate the
+     * {@code .success} / {@code .danger} style classes to its internal
+     * text-fill (those classes are wired for buttons/tags, not cells) —
+     * the label came out theme-default white in dark themes, which
+     * SkyLord flagged 2026-08-01 11:59 UTC.
      */
     private Callback<TableColumn<TxRow, String>, TableCell<TxRow, String>>
             makeStatusCellFactory() {
@@ -535,16 +546,16 @@ public final class TransmittersPane extends BorderPane {
             @Override
             protected void updateItem(String status, boolean empty) {
                 super.updateItem(status, empty);
-                getStyleClass().removeAll("success", "danger");
                 if (empty || status == null) {
                     setText(null);
+                    setStyle("");
                     return;
                 }
                 setText(status);
                 if ("connected".equals(status)) {
-                    getStyleClass().add("success");
+                    setStyle("-fx-text-fill: -color-success-fg; -fx-font-weight: bold;");
                 } else {
-                    getStyleClass().add("danger");
+                    setStyle("-fx-text-fill: -color-danger-fg; -fx-font-weight: bold;");
                 }
             }
         };
