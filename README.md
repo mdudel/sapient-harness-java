@@ -111,13 +111,15 @@ Expect 2-4 minutes on a warm cache, 10+ on a cold cache.
 This is the primary interaction path. From a full checkout:
 
 ```bash
-mvn -pl sapient-ui javafx:run
+mvn clean package
+java -jar sapient-ui/target/sapient-ui-0.1.0-SNAPSHOT.jar
 ```
 
-Or, after `mvn install`, from the fat JAR:
+Or use the wrapper script:
 
 ```bash
-java -jar sapient-ui/target/sapient-ui-0.1.0-SNAPSHOT.jar
+./build.sh run-ui       # Linux / macOS
+build.bat run-ui        # Windows
 ```
 
 The UI opens with three tabs.
