@@ -9,15 +9,18 @@ import com.mdudel.sapient.core.gen.DetectionGenerator;
 import com.mdudel.sapient.core.gen.SensorGenerator;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
+import javafx.scene.control.Accordion;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TitledPane;
 import javafx.scene.layout.GridPane;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.Alert;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.AlertAck;
@@ -286,10 +289,18 @@ public final class MessageDialogs {
      * of {@code StatusReport} heartbeats with a live-updating field of view
      * (either a swept cone or its ground polygon projection) so the receiver
      * can render the sensor's live coverage lobe.
+     *
+     * <p>Layout: 24 fields are grouped into four {@link TitledPane} sections
+     * inside an {@link Accordion}. Identity is expanded by default so the
+     * common fields are visible without scrolling; FOV geometry, motion, and
+     * status housekeeping collapse to keep the dialog under {@code 560 px}
+     * tall so OK / Cancel stay on-screen at any reasonable display size
+     * (SkyLord flagged the flat 24-row layout as too tall 2026-08-01
+     * 13:54 UTC). The whole accordion sits inside a {@link ScrollPane} as a
+     * belt-and-braces defence against small monitors.
      */
     public static Optional<SensorGenerator.Config> sensorGenerator(String nodeId) {
         Dialog<SensorGenerator.Config> d = base("Start Sensor Generator");
-        GridPane g = Forms.grid();
 
         // Identity + cadence
         TextField nodeIdField = new TextField(nodeId);
@@ -340,32 +351,72 @@ public final class MessageDialogs {
         Spinner<Integer> batteryInitSpinner = intSpinner(0, 100, 100);
         Spinner<Double> batteryDrainSpinner = doubleSpinner(0.0, 100.0, 0.0, 0.1);
 
-        int row = 0;
-        Forms.addRow(g, row++, "node_id:", nodeIdField);
-        Forms.addRow(g, row++, "tick rate (ms):", tickSpinner);
-        Forms.addRow(g, row++, "sensor latitude:", latField);
-        Forms.addRow(g, row++, "sensor longitude:", lonField);
-        Forms.addRow(g, row++, "sensor altitude (m):", altSpinner);
-        Forms.addRow(g, row++, "platform:", movingBox);
-        Forms.addRow(g, row++, "platform speed (m/s):", speedSpinner);
-        Forms.addRow(g, row++, "platform turn jitter (°):", turnJitterSpinner);
-        Forms.addRow(g, row++, "platform corral radius (m):", motionRadiusSpinner);
-        Forms.addRow(g, row++, "FOV mode:", fovModeBox);
-        Forms.addRow(g, row++, "initial azimuth (°):", initAzSpinner);
-        Forms.addRow(g, row++, "azimuth rate (°/s, +CW / -CCW):", azRateSpinner);
-        Forms.addRow(g, row++, "initial elevation (°):", initElSpinner);
-        Forms.addRow(g, row++, "elevation min (°):", elMinSpinner);
-        Forms.addRow(g, row++, "elevation max (°):", elMaxSpinner);
-        Forms.addRow(g, row++, "elevation nod rate (°/s):", elRateSpinner);
-        Forms.addRow(g, row++, "range (m):", rangeSpinner);
-        Forms.addRow(g, row++, "horizontal extent (°):", hExtentSpinner);
-        Forms.addRow(g, row++, "vertical extent (°):", vExtentSpinner);
-        Forms.addRow(g, row++, "polygon vertices (POLYGON only):", polyVertsSpinner);
-        Forms.addRow(g, row++, "system:", systemBox);
-        Forms.addRow(g, row++, "mode:", modeField);
-        Forms.addRow(g, row++, "initial battery (%):", batteryInitSpinner);
-        Forms.addRow(g, row++, "battery drain (%/min, 0=off):", batteryDrainSpinner);
-        d.getDialogPane().setContent(g);
+        // Section 1: Identity — the always-visible essentials.
+        GridPane identityG = Forms.grid();
+        Forms.addRow(identityG, 0, "node_id:", nodeIdField);
+        Forms.addRow(identityG, 1, "tick rate (ms):", tickSpinner);
+        Forms.addRow(identityG, 2, "sensor latitude:", latField);
+        Forms.addRow(identityG, 3, "sensor longitude:", lonField);
+        Forms.addRow(identityG, 4, "sensor altitude (m):", altSpinner);
+        TitledPane identityPane = new TitledPane("Identity & position", identityG);
+        identityPane.setCollapsible(false);   // essentials always visible
+
+        // Section 2: Platform motion — collapsed unless the user cares.
+        GridPane motionG = Forms.grid();
+        Forms.addRow(motionG, 0, "platform:", movingBox);
+        Forms.addRow(motionG, 1, "platform speed (m/s):", speedSpinner);
+        Forms.addRow(motionG, 2, "platform turn jitter (°):", turnJitterSpinner);
+        Forms.addRow(motionG, 3, "platform corral radius (m):", motionRadiusSpinner);
+        TitledPane motionPane = new TitledPane("Platform motion (moving platforms only)", motionG);
+
+        // Section 3: FOV geometry — the biggest section, expanded by default
+        // because it's the whole point of running a sensor generator.
+        GridPane fovG = Forms.grid();
+        Forms.addRow(fovG, 0,  "FOV mode:", fovModeBox);
+        Forms.addRow(fovG, 1,  "initial azimuth (°):", initAzSpinner);
+        Forms.addRow(fovG, 2,  "azimuth rate (°/s, +CW / -CCW):", azRateSpinner);
+        Forms.addRow(fovG, 3,  "initial elevation (°):", initElSpinner);
+        Forms.addRow(fovG, 4,  "elevation min (°):", elMinSpinner);
+        Forms.addRow(fovG, 5,  "elevation max (°):", elMaxSpinner);
+        Forms.addRow(fovG, 6,  "elevation nod rate (°/s):", elRateSpinner);
+        Forms.addRow(fovG, 7,  "range (m):", rangeSpinner);
+        Forms.addRow(fovG, 8,  "horizontal extent (°):", hExtentSpinner);
+        Forms.addRow(fovG, 9,  "vertical extent (°):", vExtentSpinner);
+        Forms.addRow(fovG, 10, "polygon vertices (POLYGON only):", polyVertsSpinner);
+        TitledPane fovPane = new TitledPane("Field of view geometry", fovG);
+
+        // Section 4: Status housekeeping — collapsed. Rarely touched after
+        // first run; defaults are fine for smoke tests.
+        GridPane statusG = Forms.grid();
+        Forms.addRow(statusG, 0, "system:", systemBox);
+        Forms.addRow(statusG, 1, "mode:", modeField);
+        Forms.addRow(statusG, 2, "initial battery (%):", batteryInitSpinner);
+        Forms.addRow(statusG, 3, "battery drain (%/min, 0=off):", batteryDrainSpinner);
+        TitledPane statusPane = new TitledPane("Status housekeeping", statusG);
+
+        // Accordion collapses the motion + FOV + status panes so only
+        // Identity + one Accordion pane are open at a time. Start with FOV
+        // expanded because it's the interesting one; the user can flip to
+        // motion or status without the dialog exploding vertically.
+        Accordion acc = new Accordion(motionPane, fovPane, statusPane);
+        acc.setExpandedPane(fovPane);
+
+        VBoxWrapper content = new VBoxWrapper(identityPane, acc);
+
+        // ScrollPane guardrail so the dialog stays bounded on small displays
+        // even if all Accordion panes were somehow expanded at once.
+        ScrollPane scroll = new ScrollPane(content);
+        scroll.setFitToWidth(true);
+        scroll.setPrefViewportHeight(520);
+        scroll.setPrefViewportWidth(460);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+
+        d.getDialogPane().setContent(scroll);
+        // Cap the dialog itself so on very small screens the OK/Cancel row
+        // never falls off the bottom — the ScrollPane takes the overflow.
+        d.setResizable(true);
+        d.getDialogPane().setPrefHeight(580);
 
         d.setResultConverter(bt -> {
             if (bt != ButtonType.OK) return null;
@@ -589,6 +640,20 @@ public final class MessageDialogs {
         d.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
         d.getDialogPane().setPadding(new Insets(4));
         return d;
+    }
+
+    /**
+     * Minimal VBox alias used purely so the sensor-generator dialog can build
+     * a two-item vertical layout (identity pane above the accordion) without
+     * pulling {@code javafx.scene.layout.VBox} into an import that would
+     * otherwise be unused by the rest of the file. Kept package-private and
+     * final — it's an implementation detail of the dialog wrapping.
+     */
+    private static final class VBoxWrapper extends javafx.scene.layout.VBox {
+        VBoxWrapper(Node... children) {
+            super(6, children);
+            setPadding(new Insets(4));
+        }
     }
 
     private static Spinner<Integer> intSpinner(int min, int max, int init) {
