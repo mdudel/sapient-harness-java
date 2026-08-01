@@ -379,6 +379,12 @@ public final class TransmittersPane extends BorderPane {
             private final Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2,
                     "Remove this transmitter");
             private final HBox box;
+            /** Row we're currently bound to, so we can unhook the listener on rebind. */
+            private TxRow boundRow;
+            /** Listener that repaints the Play button when the row's status flips. */
+            private final javafx.beans.value.ChangeListener<String> statusListener =
+                    (obs, oldV, newV) -> paintConnectButton(newV);
+
             {
                 connectBtn.setFocusTraversable(false);
                 disconnectBtn.setFocusTraversable(false);
@@ -404,13 +410,36 @@ public final class TransmittersPane extends BorderPane {
                 });
             }
 
+            /**
+             * Colour the Connect (play) button per current status:
+             * <ul><li>connected → AtlantaFX 'success' style (green)</li>
+             *     <li>anything else → AtlantaFX 'danger' style (red)</li></ul>
+             * Semantic style classes, so colour follows the active theme.
+             */
+            private void paintConnectButton(String status) {
+                connectBtn.getStyleClass().removeAll("success", "danger");
+                if ("connected".equals(status)) {
+                    connectBtn.getStyleClass().add("success");
+                } else {
+                    connectBtn.getStyleClass().add("danger");
+                }
+            }
+
             @Override
             protected void updateItem(Void v, boolean empty) {
                 super.updateItem(v, empty);
+                if (boundRow != null) {
+                    boundRow.status.removeListener(statusListener);
+                    boundRow = null;
+                }
                 if (empty || getIndex() < 0 || getIndex() >= getTableView().getItems().size()) {
                     setGraphic(null);
                     return;
                 }
+                TxRow row = getTableView().getItems().get(getIndex());
+                boundRow = row;
+                row.status.addListener(statusListener);
+                paintConnectButton(row.status.get());
                 setGraphic(box);
             }
         };

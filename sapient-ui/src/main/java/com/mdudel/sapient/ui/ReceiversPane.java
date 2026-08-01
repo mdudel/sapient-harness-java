@@ -174,6 +174,12 @@ public final class ReceiversPane extends BorderPane {
             private final Button stopBtn  = Icons.iconButton(Feather.SQUARE, "Stop this receiver");
             private final Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2, "Remove this receiver");
             private final HBox box;
+            /** Row we're currently bound to, so we can unhook the listener on rebind. */
+            private ReceiverRow boundRow;
+            /** Listener that repaints the Play button when the row's status flips. */
+            private final javafx.beans.value.ChangeListener<String> statusListener =
+                    (obs, oldV, newV) -> paintStartButton(newV);
+
             {
                 startBtn.setFocusTraversable(false);
                 stopBtn.setFocusTraversable(false);
@@ -197,13 +203,38 @@ public final class ReceiversPane extends BorderPane {
                 });
             }
 
+            /**
+             * Colour the Play (start) button per current status:
+             * <ul><li>running → AtlantaFX 'success' style (green)</li>
+             *     <li>anything else → AtlantaFX 'danger' style (red)</li></ul>
+             * These are semantic style classes, so the actual colour follows
+             * whichever theme is active.
+             */
+            private void paintStartButton(String status) {
+                startBtn.getStyleClass().removeAll("success", "danger");
+                if ("running".equals(status)) {
+                    startBtn.getStyleClass().add("success");
+                } else {
+                    startBtn.getStyleClass().add("danger");
+                }
+            }
+
             @Override
             protected void updateItem(Void v, boolean empty) {
                 super.updateItem(v, empty);
+                // Unhook from any previously-bound row's status listener.
+                if (boundRow != null) {
+                    boundRow.status.removeListener(statusListener);
+                    boundRow = null;
+                }
                 if (empty || getIndex() < 0 || getIndex() >= getTableView().getItems().size()) {
                     setGraphic(null);
                     return;
                 }
+                ReceiverRow row = getTableView().getItems().get(getIndex());
+                boundRow = row;
+                row.status.addListener(statusListener);
+                paintStartButton(row.status.get());
                 setGraphic(box);
             }
         };
