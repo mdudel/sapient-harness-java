@@ -76,4 +76,76 @@ public final class SensorGeometry {
         }
         return vertices;
     }
+
+    /**
+     * Project a sensor coverage envelope as a sector polygon: a fan sweep
+     * of {@code azimuthSpanDeg} centred on {@code centreAzimuthDeg}, at
+     * {@code rangeMeters} range. Two shapes come out of this helper:
+     *
+     * <ol>
+     *   <li>{@code azimuthSpanDeg >= 360} — a closed ring of {@code
+     *       vertexCount} vertices around the sensor (a full disc). No apex
+     *       vertex; the polygon is just the arc, closable by the receiver.</li>
+     *   <li>Otherwise — a triangular fan: apex at the sensor, followed by
+     *       {@code vertexCount - 1} arc vertices evenly spaced across the
+     *       sector. Same convention as {@link #projectConeFootprint}.</li>
+     * </ol>
+     *
+     * <p>This is the geometric primitive behind the {@code coverage} slot on
+     * {@link SensorGenerator.FovMode#COVERAGE_WITH_OBSCURATION}. It's kept
+     * separate from {@link #projectConeFootprint} because coverage semantics
+     * differ from FOV semantics: coverage is the sensor's <b>reachable
+     * envelope</b> (typically static, often full-disc), while an FOV cone is
+     * the live look direction that sweeps every tick.
+     *
+     * <p>Uses {@link Geo#offset} for the great-circle offset so vertices are
+     * geodetically correct at ranges up to a few hundred km. Azimuth is a
+     * compass bearing: 0 = north, positive = clockwise.
+     *
+     * @param sensorLatDeg      apex latitude (decimal degrees)
+     * @param sensorLonDeg      apex longitude (decimal degrees)
+     * @param centreAzimuthDeg  sector centre bearing; ignored when
+     *                          {@code azimuthSpanDeg >= 360}
+     * @param azimuthSpanDeg    total sector width; clamped to
+     *                          {@code (0, 360]}. Values {@code >= 360}
+     *                          trigger the full-disc branch.
+     * @param rangeMeters       coverage range (arc radius)
+     * @param vertexCount       total vertices in the returned list; clamped
+     *                          to {@code >= 3} so the receiver always gets a
+     *                          closable polygon
+     * @return an ordered list of {@code {lat, lon}} vertex pairs. For sector
+     *         mode the apex is first; for full-disc mode there is no apex.
+     */
+    public static List<double[]> projectSectorFootprint(
+            double sensorLatDeg, double sensorLonDeg,
+            double centreAzimuthDeg,
+            double azimuthSpanDeg,
+            double rangeMeters,
+            int vertexCount) {
+
+        int total = Math.max(3, vertexCount);
+        // Full-disc branch: 360 deg or wider. No apex vertex; the polygon is
+        // just the closed ring around the sensor.
+        if (azimuthSpanDeg >= 360.0) {
+            List<double[]> ring = new ArrayList<>(total);
+            for (int i = 0; i < total; i++) {
+                double azDeg = (360.0 * i) / total;
+                double azRad = Math.toRadians(azDeg);
+                double dEast = rangeMeters * Math.sin(azRad);
+                double dNorth = rangeMeters * Math.cos(azRad);
+                ring.add(Geo.offset(sensorLatDeg, sensorLonDeg,
+                        dEast, dNorth));
+            }
+            return ring;
+        }
+
+        // Sector branch: negative or zero span degenerates to a hairline
+        // triangle at the boresight. Clamp so the polygon still closes.
+        double effectiveSpan = Math.max(0.0, azimuthSpanDeg);
+        // Delegate to projectConeFootprint so cone-vs-sector geometry stays
+        // in exactly one place. The two are the same shape when both use
+        // apex-first semantics.
+        return projectConeFootprint(sensorLatDeg, sensorLonDeg,
+                centreAzimuthDeg, effectiveSpan, rangeMeters, total);
+    }
 }
