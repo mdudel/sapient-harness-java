@@ -12,6 +12,8 @@ import uk.gov.dstl.sapientmsg.bsiflex335v2.RangeBearingDatum;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.SapientMessage;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.StatusReport;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.Executors;
@@ -263,6 +265,28 @@ public final class SensorGenerator implements AutoCloseable {
             // 5) Build the FOV payload for this tick.
             LocationOrRangeBearing fov = buildFov();
 
+            // 5b) POLYGON mode also emits the geometric complement of the
+            //     LOB (disc-minus-LOB) as obscuration, so a receiver renders
+            //     green FOV + red "everything else" side-by-side. CONE mode
+            //     is unaffected (still emits a RangeBearingCone only).
+            List<LocationOrRangeBearing> obscuration = Collections.emptyList();
+            if (config.fovMode == FovMode.POLYGON) {
+                List<List<double[]>> antiLob = SensorGeometry.projectAntiLobPolygon(
+                        platform.lat, platform.lon,
+                        currentAzimuthDeg,
+                        config.horizontalExtentDeg,
+                        config.rangeMeters,
+                        /*arcVertices*/ Math.max(12, config.polygonVertexCount * 2));
+                if (!antiLob.isEmpty()) {
+                    List<LocationOrRangeBearing> obs = new ArrayList<>(antiLob.size());
+                    for (List<double[]> p : antiLob) {
+                        obs.add(MessageFactory.fovPolygon(
+                                MessageFactory.polygon(p, config.centerAltM)));
+                    }
+                    obscuration = obs;
+                }
+            }
+
             // 6) Emit.
             StatusReport.Info info = firstTick
                     ? StatusReport.Info.INFO_NEW
@@ -277,7 +301,9 @@ public final class SensorGenerator implements AutoCloseable {
                     platform.lat, platform.lon, config.centerAltM,
                     null, null,
                     currentBatteryLevel == null ? null : currentBatteryLevel.intValue(),
-                    fov);
+                    fov,
+                    Collections.emptyList(),
+                    obscuration);
             sink.accept(msg);
         } catch (Throwable t) {
             // Swallow so ScheduledExecutorService doesn't silently kill future ticks.

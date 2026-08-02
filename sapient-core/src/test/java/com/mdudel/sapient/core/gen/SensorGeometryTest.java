@@ -143,4 +143,88 @@ class SensorGeometryTest {
         assertThat(a[0]).isCloseTo(LAT, within(1e-6));
         assertThat(a[1]).isGreaterThan(LON);
     }
+
+    // ---- projectAntiLobPolygon (POLYGON-mode obscuration) -------------
+
+    @Test
+    void antiLobEmptyWhenLobCovers360() {
+        List<List<double[]>> out = SensorGeometry.projectAntiLobPolygon(
+                LAT, LON, /*az*/ 0.0, /*span*/ 360.0,
+                /*range*/ 5000.0, /*arcVerts*/ 24);
+        assertThat(out).isEmpty();
+    }
+
+    @Test
+    void antiLobEmptyWhenLobOverflows360() {
+        List<List<double[]>> out = SensorGeometry.projectAntiLobPolygon(
+                LAT, LON, 45.0, 400.0, 5000.0, 24);
+        assertThat(out).isEmpty();
+    }
+
+    @Test
+    void antiLobHairlineLobProducesFullDiscRingWithNoApex() {
+        int n = 24;
+        List<List<double[]>> out = SensorGeometry.projectAntiLobPolygon(
+                LAT, LON, 90.0, /*lobSpan*/ 0.0, /*range*/ 3000.0, n);
+        assertThat(out).hasSize(1);
+        List<double[]> ring = out.get(0);
+        // Hairline LOB -> obscuration is a bare closed ring, N arc verts,
+        // no apex.
+        assertThat(ring).hasSize(n);
+        for (double[] v : ring) {
+            double d = Geo.distanceMeters(LAT, LON, v[0], v[1]);
+            assertThat(d).isCloseTo(3000.0, within(1.0));
+        }
+    }
+
+    @Test
+    void antiLobRegularLobIsPacManApexPlusArc() {
+        double lobSpan = 30.0;
+        int arcN = 24;
+        List<List<double[]>> out = SensorGeometry.projectAntiLobPolygon(
+                LAT, LON, /*centre*/ 90.0, lobSpan,
+                /*range*/ 4000.0, arcN);
+        assertThat(out).hasSize(1);
+        List<double[]> pac = out.get(0);
+        // Apex first, then arcN arc vertices.
+        assertThat(pac).hasSize(arcN + 1);
+        assertThat(pac.get(0)[0]).isCloseTo(LAT, within(1e-12));
+        assertThat(pac.get(0)[1]).isCloseTo(LON, within(1e-12));
+        // Every arc vertex should be ~range from the apex.
+        for (int i = 1; i < pac.size(); i++) {
+            double d = Geo.distanceMeters(LAT, LON, pac.get(i)[0], pac.get(i)[1]);
+            assertThat(d).isCloseTo(4000.0, within(2.0));
+        }
+    }
+
+    @Test
+    void antiLobArcStartsAtLobRightEdgeAndEndsAtLobLeftEdge() {
+        // LOB centred on 0 (north), 60 deg span -> right edge at az=+30,
+        // left edge at az=-30 (which is 330). The Pac-Man arc walks CCW
+        // from +30 around through 180 back to 330 (span 300 deg).
+        // Use arcN=3 so vertex indices are: 1=first(+30), 2=mid(+180),
+        // 3=last(+330). arcN is also the min allowed after the clamp.
+        List<List<double[]>> out = SensorGeometry.projectAntiLobPolygon(
+                LAT, LON, /*centre*/ 0.0, /*span*/ 60.0,
+                /*range*/ 2000.0, /*arcN*/ 3);
+        List<double[]> pac = out.get(0);
+        assertThat(pac).hasSize(4);   // apex + 3 arc verts
+        // First arc vertex: az=+30 -> NE quadrant (lon>LON, lat>LAT).
+        assertThat(pac.get(1)[0]).isGreaterThan(LAT);
+        assertThat(pac.get(1)[1]).isGreaterThan(LON);
+        // Middle arc vertex: az=+180 -> due south (lat<LAT, lon~LON).
+        assertThat(pac.get(2)[0]).isLessThan(LAT);
+        assertThat(pac.get(2)[1]).isCloseTo(LON, within(1e-6));
+        // Last arc vertex: az=+330 -> NW quadrant (lon<LON, lat>LAT).
+        assertThat(pac.get(3)[0]).isGreaterThan(LAT);
+        assertThat(pac.get(3)[1]).isLessThan(LON);
+    }
+
+    @Test
+    void antiLobArcVertsClampToThree() {
+        List<List<double[]>> out = SensorGeometry.projectAntiLobPolygon(
+                LAT, LON, 90.0, 30.0, 3000.0, /*arcN*/ 1);
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0)).hasSize(1 + 3); // apex + clamped arc
+    }
 }

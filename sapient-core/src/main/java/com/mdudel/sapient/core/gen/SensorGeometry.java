@@ -148,4 +148,83 @@ public final class SensorGeometry {
         return projectConeFootprint(sensorLatDeg, sensorLonDeg,
                 centreAzimuthDeg, effectiveSpan, rangeMeters, total);
     }
+
+    /**
+     * Project the polygon that is "disc of radius {@code rangeMeters} MINUS
+     * the LOB cone". Used to fill the SAPIENT StatusReport {@code obscuration}
+     * slot as the geometric complement of a POLYGON-mode FOV — so a receiver
+     * that renders FOV green and obscuration red gets an unambiguous picture:
+     * green LOB wedge, red "everything else" around it.
+     *
+     * <p>Shape: a single closed non-convex "Pac-Man" polygon walking the
+     * disc arc from the LOB right edge CCW around to the LOB left edge,
+     * then closing via the sensor apex. The polygon has {@code arcVertices
+     * + 1} vertices: N points on the far arc + the apex closing point.
+     *
+     * <p>Edge cases:
+     * <ul>
+     *   <li>{@code lobSpanDeg >= 360}: LOB covers the whole disc, so
+     *       obscuration is empty — returns an empty list.</li>
+     *   <li>{@code lobSpanDeg <= 0}: LOB is a hairline; obscuration is
+     *       the entire disc as a closed ring (no apex vertex).</li>
+     * </ul>
+     *
+     * @param sensorLatDeg   apex latitude (decimal degrees)
+     * @param sensorLonDeg   apex longitude (decimal degrees)
+     * @param lobCentreAzDeg LOB boresight bearing (0 = N, +CW)
+     * @param lobSpanDeg     LOB horizontal beamwidth (full extent)
+     * @param rangeMeters    disc radius — same as the LOB range so the FOV
+     *                       and its obscuration complement together tile
+     *                       the whole disc with no gap.
+     * @param arcVertices    vertices along the far arc; clamped to
+     *                       {@code >= 3}. More = smoother arc, at wire cost.
+     * @return one polygon in {@code {lat, lon}} pairs, or empty when the
+     *         LOB covers the full disc. Wrapped in a list for symmetry with
+     *         SAPIENT's {@code repeated obscuration} slot.
+     */
+    public static List<List<double[]>> projectAntiLobPolygon(
+            double sensorLatDeg, double sensorLonDeg,
+            double lobCentreAzDeg,
+            double lobSpanDeg,
+            double rangeMeters,
+            int arcVertices) {
+
+        if (lobSpanDeg >= 360.0) return new ArrayList<>();
+
+        int n = Math.max(3, arcVertices);
+
+        // Hairline LOB: obscuration = full disc (closed ring, no apex).
+        if (lobSpanDeg <= 0.0) {
+            List<double[]> ring = new ArrayList<>(n);
+            for (int i = 0; i < n; i++) {
+                double azDeg = (360.0 * i) / n;
+                double azRad = Math.toRadians(azDeg);
+                ring.add(Geo.offset(sensorLatDeg, sensorLonDeg,
+                        rangeMeters * Math.sin(azRad),
+                        rangeMeters * Math.cos(azRad)));
+            }
+            List<List<double[]>> out = new ArrayList<>(1);
+            out.add(ring);
+            return out;
+        }
+
+        // Pac-Man: apex-first, then arc from LOB right edge CCW around to
+        // LOB left edge, evenly spaced across (360 - lobSpan) degrees.
+        double halfLob = lobSpanDeg / 2.0;
+        double antiSpan = 360.0 - lobSpanDeg;
+        double startAz = lobCentreAzDeg + halfLob;
+        List<double[]> poly = new ArrayList<>(n + 1);
+        poly.add(new double[] { sensorLatDeg, sensorLonDeg });   // apex
+        for (int i = 0; i < n; i++) {
+            double t = (n == 1) ? 0.0 : (double) i / (n - 1);
+            double azDeg = startAz + t * antiSpan;
+            double azRad = Math.toRadians(azDeg);
+            poly.add(Geo.offset(sensorLatDeg, sensorLonDeg,
+                    rangeMeters * Math.sin(azRad),
+                    rangeMeters * Math.cos(azRad)));
+        }
+        List<List<double[]>> out = new ArrayList<>(1);
+        out.add(poly);
+        return out;
+    }
 }

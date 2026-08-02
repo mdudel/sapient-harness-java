@@ -267,6 +267,8 @@ public final class MessageDialogs {
             double lon = Double.parseDouble(lonField.getText());
 
             LocationOrRangeBearing fov = null;
+            java.util.List<LocationOrRangeBearing> obscuration =
+                    java.util.Collections.emptyList();
             StatusFovMode mode = fovModeBox.getValue();
             if (mode == StatusFovMode.CONE) {
                 RangeBearingCone cone = MessageFactory.cone(
@@ -286,6 +288,27 @@ public final class MessageDialogs {
                         fovPolyVertsSpinner.getValue());
                 LocationList poly = MessageFactory.polygon(vertices, alt);
                 fov = MessageFactory.fovPolygon(poly);
+
+                // POLYGON mode: also emit the geometric complement of the
+                // LOB (disc-minus-LOB) as obscuration so a receiver renders
+                // green FOV + red "everything else" side-by-side. Same
+                // helper the live SensorGenerator ticker uses.
+                java.util.List<java.util.List<double[]>> antiLob =
+                        SensorGeometry.projectAntiLobPolygon(
+                                lat, lon,
+                                fovAzSpinner.getValue(),
+                                fovHExtSpinner.getValue(),
+                                fovRangeSpinner.getValue(),
+                                Math.max(12, fovPolyVertsSpinner.getValue() * 2));
+                if (!antiLob.isEmpty()) {
+                    java.util.List<LocationOrRangeBearing> obs =
+                            new java.util.ArrayList<>(antiLob.size());
+                    for (java.util.List<double[]> p : antiLob) {
+                        obs.add(MessageFactory.fovPolygon(
+                                MessageFactory.polygon(p, alt)));
+                    }
+                    obscuration = obs;
+                }
             }
 
             // FOV=NONE routes through the pre-existing 9-arg factory so the
@@ -310,7 +333,9 @@ public final class MessageDialogs {
                     powerSrcBox.getValue(),
                     powerStatBox.getValue(),
                     batterySpinner.getValue(),
-                    fov);
+                    fov,
+                    java.util.Collections.emptyList(),
+                    obscuration);
         });
         return d.showAndWait();
     }
