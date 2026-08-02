@@ -219,6 +219,9 @@ public final class MessageFactory {
      * thereafter (per SAPIENT semantics — receivers use Info to know when to
      * re-render vs. treat as a heartbeat), and to attach a live-updating FOV
      * cone or polygon on every heartbeat.
+     *
+     * <p>Delegates to the 13-arg overload with empty coverage/obscuration
+     * lists, matching the singleton-FOV semantics this method has always had.
      */
     public static SapientMessage statusReport(String nodeId,
                                               StatusReport.System system,
@@ -229,6 +232,47 @@ public final class MessageFactory {
                                               StatusReport.PowerStatus powerStatus,
                                               Integer batteryLevel,
                                               LocationOrRangeBearing fieldOfView) {
+        return statusReport(nodeId, system, info, mode,
+                latDeg, lonDeg, altMeters,
+                powerSource, powerStatus, batteryLevel,
+                fieldOfView,
+                java.util.Collections.emptyList(),
+                java.util.Collections.emptyList());
+    }
+
+    /**
+     * Full StatusReport builder, including {@code coverage[]} and
+     * {@code obscuration[]} repeated slots from the SAPIENT BSI Flex 335
+     * v2.0 spec (see {@code status_report.proto} L30/33 — both are
+     * {@code repeated LocationOrRangeBearing}).
+     *
+     * <p>Semantics:
+     * <ul>
+     *   <li>{@code fieldOfView} — the live look direction (typically a
+     *       swept cone footprint that changes every tick).</li>
+     *   <li>{@code coverage} — the sensor's reachable envelope; typically
+     *       static, often a full-disc polygon. Multiple entries allowed for
+     *       Fusion Nodes that report combined child coverage.</li>
+     *   <li>{@code obscuration} — masked areas the sensor cannot see
+     *       (buildings, terrain, EMI dead zones). Typically world-anchored;
+     *       any number of entries allowed.</li>
+     * </ul>
+     *
+     * <p>Null lists are treated as empty. Empty lists leave the wire slot
+     * absent entirely (no zero-length polygon leaks). Individual null
+     * elements inside a non-null list are skipped defensively.
+     */
+    public static SapientMessage statusReport(String nodeId,
+                                              StatusReport.System system,
+                                              StatusReport.Info info,
+                                              String mode,
+                                              Double latDeg, Double lonDeg, Double altMeters,
+                                              StatusReport.PowerSource powerSource,
+                                              StatusReport.PowerStatus powerStatus,
+                                              Integer batteryLevel,
+                                              LocationOrRangeBearing fieldOfView,
+                                              List<LocationOrRangeBearing> coverage,
+                                              List<LocationOrRangeBearing> obscuration) {
         StatusReport.Builder sr = StatusReport.newBuilder()
                 .setReportId(newUlid())
                 .setSystem(system == null ? StatusReport.System.SYSTEM_OK : system)
@@ -246,6 +290,16 @@ public final class MessageFactory {
         }
         if (fieldOfView != null) {
             sr.setFieldOfView(fieldOfView);
+        }
+        if (coverage != null) {
+            for (LocationOrRangeBearing c : coverage) {
+                if (c != null) sr.addCoverage(c);
+            }
+        }
+        if (obscuration != null) {
+            for (LocationOrRangeBearing o : obscuration) {
+                if (o != null) sr.addObscuration(o);
+            }
         }
         return SapientMessage.newBuilder()
                 .setTimestamp(now())
