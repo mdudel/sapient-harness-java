@@ -148,17 +148,20 @@ public final class MessageDialogs {
 
     // ---------- StatusReport ----------
     /** FOV mode for the one-shot StatusReport dialog. */
-    private enum StatusFovMode { NONE, CONE, POLYGON }
+    private enum StatusFovMode { NONE, CONE, POLYGON, POLYGON_WITH_OBSCURATION }
 
     /**
-     * One-shot StatusReport dialog. As of 2026-08-01 16:12 UTC an optional
-     * FOV attachment can ship with the message: NONE (no field_of_view on
-     * the wire, back-compat default), CONE (a static
-     * {@link RangeBearingCone}), or POLYGON (the cone's ground footprint
-     * projected via {@link SensorGeometry#projectConeFootprint} — same
-     * projection math the live SensorGenerator ticker uses so the two paths
-     * stay in perfect lock-step). Unlike the SensorGenerator ticker, this
-     * is a single static snapshot: no motion, no sweep.
+     * One-shot StatusReport dialog. As of 2026-08-03 an optional FOV
+     * attachment can ship with the message: NONE (no field_of_view on the
+     * wire, back-compat default), CONE (a static {@link RangeBearingCone}),
+     * POLYGON (the cone's ground footprint projected via
+     * {@link SensorGeometry#projectConeFootprint}, FOV only), or
+     * POLYGON_WITH_OBSCURATION (same FOV polygon PLUS the disc-minus-LOB
+     * complement in {@code obscuration[0]}, via
+     * {@link SensorGeometry#projectAntiLobPolygon}). Same projection math
+     * the live SensorGenerator ticker uses so the two paths stay in
+     * perfect lock-step. Unlike the SensorGenerator ticker, this is a
+     * single static snapshot: no motion, no sweep.
      *
      * <p>Layout: 9 core rows always visible, FOV lives in a collapsed
      * {@link TitledPane} so operators who don't need FOV see the same
@@ -236,7 +239,7 @@ public final class MessageDialogs {
         Forms.addRow(fovG, 4, "horizontal extent (°):", fovHExtSpinner);
         Forms.addRow(fovG, 5, "vertical extent (°):", fovVExtSpinner);
         Forms.addRow(fovG, 6, "datum:", fovDatumBox);
-        Forms.addRow(fovG, 7, "polygon vertices (POLYGON only):", fovPolyVertsSpinner);
+        Forms.addRow(fovG, 7, "polygon vertices (POLYGON modes only):", fovPolyVertsSpinner);
         TitledPane fovPane = new TitledPane("Optional field of view", fovG);
         fovPane.setExpanded(false);   // hidden by default: dialog looks unchanged
 
@@ -279,7 +282,8 @@ public final class MessageDialogs {
                         fovVExtSpinner.getValue(),
                         fovDatumBox.getValue());
                 fov = MessageFactory.fovCone(cone);
-            } else if (mode == StatusFovMode.POLYGON) {
+            } else if (mode == StatusFovMode.POLYGON
+                    || mode == StatusFovMode.POLYGON_WITH_OBSCURATION) {
                 java.util.List<double[]> vertices = SensorGeometry.projectConeFootprint(
                         lat, lon,
                         fovAzSpinner.getValue(),
@@ -289,25 +293,29 @@ public final class MessageDialogs {
                 LocationList poly = MessageFactory.polygon(vertices, alt);
                 fov = MessageFactory.fovPolygon(poly);
 
-                // POLYGON mode: also emit the geometric complement of the
-                // LOB (disc-minus-LOB) as obscuration so a receiver renders
-                // green FOV + red "everything else" side-by-side. Same
-                // helper the live SensorGenerator ticker uses.
-                java.util.List<java.util.List<double[]>> antiLob =
-                        SensorGeometry.projectAntiLobPolygon(
-                                lat, lon,
-                                fovAzSpinner.getValue(),
-                                fovHExtSpinner.getValue(),
-                                fovRangeSpinner.getValue(),
-                                Math.max(12, fovPolyVertsSpinner.getValue() * 2));
-                if (!antiLob.isEmpty()) {
-                    java.util.List<LocationOrRangeBearing> obs =
-                            new java.util.ArrayList<>(antiLob.size());
-                    for (java.util.List<double[]> p : antiLob) {
-                        obs.add(MessageFactory.fovPolygon(
-                                MessageFactory.polygon(p, alt)));
+                // POLYGON_WITH_OBSCURATION ONLY: also emit the geometric
+                // complement of the LOB (disc-minus-LOB) as obscuration so
+                // a receiver renders green FOV + red "everything else"
+                // side-by-side. Plain POLYGON ships only the FOV polygon,
+                // no obscuration. Same helper the live SensorGenerator
+                // ticker uses so wire shapes match tick-for-tick.
+                if (mode == StatusFovMode.POLYGON_WITH_OBSCURATION) {
+                    java.util.List<java.util.List<double[]>> antiLob =
+                            SensorGeometry.projectAntiLobPolygon(
+                                    lat, lon,
+                                    fovAzSpinner.getValue(),
+                                    fovHExtSpinner.getValue(),
+                                    fovRangeSpinner.getValue(),
+                                    Math.max(12, fovPolyVertsSpinner.getValue() * 2));
+                    if (!antiLob.isEmpty()) {
+                        java.util.List<LocationOrRangeBearing> obs =
+                                new java.util.ArrayList<>(antiLob.size());
+                        for (java.util.List<double[]> p : antiLob) {
+                            obs.add(MessageFactory.fovPolygon(
+                                    MessageFactory.polygon(p, alt)));
+                        }
+                        obscuration = obs;
                     }
-                    obscuration = obs;
                 }
             }
 

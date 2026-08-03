@@ -43,7 +43,15 @@ import java.util.function.Consumer;
  *       every tick as a triangular polygon ({@code polygonVertexCount}
  *       sides): apex at the sensor, base arc at {@code rangeMeters} out
  *       along {@code azimuth}, half-angle = {@code horizontalExtentDeg / 2}.
- *       Rotates with the boresight as the cone sweeps.</li>
+ *       Rotates with the boresight as the cone sweeps. FOV only, no
+ *       obscuration on the wire.</li>
+ *   <li>{@link FovMode#POLYGON_WITH_OBSCURATION} \u2014 same FOV polygon as
+ *       {@code POLYGON}, plus the geometric complement of the LOB wedge
+ *       (disc-minus-LOB, projected via
+ *       {@link SensorGeometry#projectAntiLobPolygon}) shipped in
+ *       {@code obscuration[0]}. Lets a receiver render green FOV + red
+ *       "everything else" side-by-side without any receiver-side
+ *       geometry work.</li>
  * </ul>
  *
  * <p><b>Platform motion</b>: if {@link Config#moving}, the sensor's
@@ -63,7 +71,7 @@ import java.util.function.Consumer;
 public final class SensorGenerator implements AutoCloseable {
 
     /** FOV representation on the wire. */
-    public enum FovMode { CONE, POLYGON }
+    public enum FovMode { CONE, POLYGON, POLYGON_WITH_OBSCURATION }
 
     /** Immutable configuration for one sensor. */
     public static final class Config {
@@ -265,12 +273,13 @@ public final class SensorGenerator implements AutoCloseable {
             // 5) Build the FOV payload for this tick.
             LocationOrRangeBearing fov = buildFov();
 
-            // 5b) POLYGON mode also emits the geometric complement of the
-            //     LOB (disc-minus-LOB) as obscuration, so a receiver renders
-            //     green FOV + red "everything else" side-by-side. CONE mode
-            //     is unaffected (still emits a RangeBearingCone only).
+            // 5b) POLYGON_WITH_OBSCURATION mode also emits the geometric
+            //     complement of the LOB (disc-minus-LOB) as obscuration, so
+            //     a receiver renders green FOV + red "everything else"
+            //     side-by-side. Plain POLYGON and CONE modes ship no
+            //     obscuration \u2014 they set only field_of_view on the wire.
             List<LocationOrRangeBearing> obscuration = Collections.emptyList();
-            if (config.fovMode == FovMode.POLYGON) {
+            if (config.fovMode == FovMode.POLYGON_WITH_OBSCURATION) {
                 List<List<double[]>> antiLob = SensorGeometry.projectAntiLobPolygon(
                         platform.lat, platform.lon,
                         currentAzimuthDeg,
@@ -324,9 +333,13 @@ public final class SensorGenerator implements AutoCloseable {
             return MessageFactory.fovCone(cone);
         }
 
-        // POLYGON: project the cone's ground footprint via the shared
-        // helper so the one-shot StatusReport dialog and the live ticker
-        // stay in perfect lock-step.
+        // POLYGON and POLYGON_WITH_OBSCURATION: project the cone's ground
+        // footprint via the shared helper so the one-shot StatusReport
+        // dialog and the live ticker stay in perfect lock-step. Both
+        // polygon modes emit the identical FOV geometry \u2014 they diverge
+        // only in whether tick() attaches the anti-LOB obscuration.
+        // (Was originally documented as POLYGON-only; kept the code path
+        // shared when POLYGON_WITH_OBSCURATION was split out 2026-08-03.)
         List<double[]> vertices = SensorGeometry.projectConeFootprint(
                 platform.lat, platform.lon,
                 currentAzimuthDeg,

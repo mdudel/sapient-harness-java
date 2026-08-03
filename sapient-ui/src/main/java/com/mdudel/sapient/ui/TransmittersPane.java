@@ -406,7 +406,17 @@ public final class TransmittersPane extends BorderPane {
         sensor.start();
         // Activity chip uses a distinct emoji so the operator can eyeball
         // WHICH generator is running when a row has both.
-        String fovLabel = cfg.fovMode == SensorGenerator.FovMode.CONE ? "cone" : "polygon";
+        // 2026-08-03: FovMode split into 3 values (CONE, POLYGON,
+        // POLYGON_WITH_OBSCURATION). Activity chip stays short so it fits
+        // in the row — "polygon+obs" carries the extra info without
+        // blowing the column width.
+        String fovLabel;
+        switch (cfg.fovMode) {
+            case CONE:                     fovLabel = "cone"; break;
+            case POLYGON_WITH_OBSCURATION: fovLabel = "polygon+obs"; break;
+            case POLYGON:
+            default:                       fovLabel = "polygon"; break;
+        }
         row.activity.set(String.format("📡 sensor: %s FOV, %.0f°/s az, %.0f m range @ %d ms%s",
                 fovLabel, cfg.azimuthRateDegPerSec, cfg.rangeMeters, cfg.tickMs,
                 cfg.moving ? " (moving)" : ""));
