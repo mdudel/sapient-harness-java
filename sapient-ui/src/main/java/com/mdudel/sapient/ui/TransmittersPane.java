@@ -121,6 +121,15 @@ public final class TransmittersPane extends BorderPane {
         form.setPadding(new Insets(0, 0, 8, 0));
 
         TableView<TxRow> table = new TableView<>(rows);
+        // 2026-08-04: column layout restructure per Marty's UI ask.
+        // Actions (connect/disconnect) moves to the FRONT for immediate
+        // reach; the old right-hand tail collapses into a single Config
+        // column holding cog + delete so nothing gets clipped when the
+        // table narrows.
+        TableColumn<TxRow, Void> actionsCol = new TableColumn<>("Actions");
+        actionsCol.setCellFactory(makeActionsCellFactory());
+        actionsCol.setPrefWidth(90);
+        actionsCol.setSortable(false);
         TableColumn<TxRow, String> nameCol = new TableColumn<>("Name");
         nameCol.setCellValueFactory(d -> d.getValue().name);
         nameCol.setPrefWidth(130);
@@ -151,15 +160,20 @@ public final class TransmittersPane extends BorderPane {
         TableColumn<TxRow, Boolean> enforceCol = new TableColumn<>("Enforce handshake");
         enforceCol.setCellValueFactory(d -> d.getValue().enforceHandshake);
         enforceCol.setCellFactory(makeEnforceCellFactory());
-        enforceCol.setPrefWidth(140);
+        // 170 not 140 — matches ReceiversPane; header 'Enforce handshake'
+        // truncated at 140 px in the 2026-08-04 layout audit.
+        enforceCol.setPrefWidth(170);
         enforceCol.setSortable(false);
-        TableColumn<TxRow, Void> actionsCol = new TableColumn<>("Actions");
-        actionsCol.setCellFactory(makeActionsCellFactory());
-        actionsCol.setPrefWidth(170);
-        actionsCol.setSortable(false);
-        table.getColumns().addAll(nameCol, hostCol, portCol, statusCol, countCol,
-                activityCol, enforceCol, actionsCol);
+        TableColumn<TxRow, Void> configCol = new TableColumn<>("Config");
+        configCol.setCellFactory(makeConfigCellFactory());
+        configCol.setPrefWidth(100);
+        configCol.setSortable(false);
+        table.getColumns().addAll(actionsCol, nameCol, hostCol, portCol, statusCol, countCol,
+                activityCol, enforceCol, configCol);
         table.setPrefHeight(200);
+        // Distribute leftover horizontal space across all columns so we
+        // don't get JavaFX's default phantom trailing empty column.
+        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
 
         // Inline validation hint (see ReceiversPane for the 2026-08-04
         // rationale -- silent-fail on Add was mistaken for the button
@@ -807,6 +821,12 @@ public final class TransmittersPane extends BorderPane {
 
     // ---------- Actions column: per-row connect / disconnect / remove ----------
 
+    /**
+     * Cell factory for the leading "Actions" column: just Connect + Disconnect.
+     * Moved to the front of the row 2026-08-04 so the icons stay reachable
+     * regardless of how narrow the table gets; the old right-hand tail
+     * (cog + delete) now lives in the trailing Config column.
+     */
     private Callback<TableColumn<TxRow, Void>, TableCell<TxRow, Void>>
             makeActionsCellFactory() {
         return col -> new TableCell<>() {
@@ -814,14 +834,6 @@ public final class TransmittersPane extends BorderPane {
                     "Connect this transmitter");
             private final Button disconnectBtn = Icons.iconButton(Feather.SQUARE,
                     "Disconnect this transmitter");
-            // 2026-08-01 (SkyLord): cog opens the full-property edit dialog.
-            // Saving disconnects the transmitter if it was live — spec:
-            // "saving stops the interface, hit Connect when ready". Sits
-            // between disconnect and remove for reading-order symmetry.
-            private final Button editBtn = Icons.iconButton(Feather.SETTINGS,
-                    "Edit — saving disconnects this transmitter");
-            private final Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2,
-                    "Remove this transmitter");
             private final HBox box;
             /** Row we're currently bound to, so we can unhook the listener on rebind. */
             private TxRow boundRow;
@@ -832,13 +844,9 @@ public final class TransmittersPane extends BorderPane {
             {
                 connectBtn.setFocusTraversable(false);
                 disconnectBtn.setFocusTraversable(false);
-                editBtn.setFocusTraversable(false);
-                removeBtn.setFocusTraversable(false);
                 connectBtn.getStyleClass().add("flat");
                 disconnectBtn.getStyleClass().add("flat");
-                editBtn.getStyleClass().add("flat");
-                removeBtn.getStyleClass().add("flat");
-                box = new HBox(4, connectBtn, disconnectBtn, editBtn, removeBtn);
+                box = new HBox(4, connectBtn, disconnectBtn);
                 box.setAlignment(Pos.CENTER_LEFT);
                 connectBtn.setOnAction(e -> {
                     TxRow r = getTableView().getItems().get(getIndex());
@@ -848,24 +856,12 @@ public final class TransmittersPane extends BorderPane {
                     TxRow r = getTableView().getItems().get(getIndex());
                     disconnect(r);
                 });
-                editBtn.setOnAction(e -> {
-                    TxRow r = getTableView().getItems().get(getIndex());
-                    editRow(r);
-                });
-                removeBtn.setOnAction(e -> {
-                    TxRow r = getTableView().getItems().get(getIndex());
-                    stopGenerator(r);
-                    disconnect(r);
-                    rows.remove(r);
-                    persistNow.run();
-                });
             }
 
             /**
              * Colour the Connect (play) button per current status:
              * <ul><li>connected → AtlantaFX 'success' style (green)</li>
              *     <li>anything else → AtlantaFX 'danger' style (red)</li></ul>
-             * Semantic style classes, so colour follows the active theme.
              */
             private void paintConnectButton(String status) {
                 connectBtn.getStyleClass().removeAll("success", "danger");
@@ -891,6 +887,57 @@ public final class TransmittersPane extends BorderPane {
                 boundRow = row;
                 row.status.addListener(statusListener);
                 paintConnectButton(row.status.get());
+                setGraphic(box);
+            }
+        };
+    }
+
+    /**
+     * Cell factory for the trailing "Config" column: cog + delete.
+     * Merged 2026-08-04 from the old "Actions" tail column that used
+     * to hold connect/disconnect/cog/delete — the 4-icon cluster was
+     * too wide to fit reliably. Same flat icon-button style as the
+     * leading Actions column so they look uniform across the row.
+     */
+    private Callback<TableColumn<TxRow, Void>, TableCell<TxRow, Void>>
+            makeConfigCellFactory() {
+        return col -> new TableCell<>() {
+            // Cog opens the full-property edit dialog. Saving disconnects
+            // the transmitter if it was live — spec: "saving stops the
+            // interface, hit Connect when ready".
+            private final Button editBtn = Icons.iconButton(Feather.SETTINGS,
+                    "Edit — saving disconnects this transmitter");
+            private final Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2,
+                    "Remove this transmitter");
+            private final HBox box;
+
+            {
+                editBtn.setFocusTraversable(false);
+                removeBtn.setFocusTraversable(false);
+                editBtn.getStyleClass().add("flat");
+                removeBtn.getStyleClass().add("flat");
+                box = new HBox(4, editBtn, removeBtn);
+                box.setAlignment(Pos.CENTER_LEFT);
+                editBtn.setOnAction(e -> {
+                    TxRow r = getTableView().getItems().get(getIndex());
+                    editRow(r);
+                });
+                removeBtn.setOnAction(e -> {
+                    TxRow r = getTableView().getItems().get(getIndex());
+                    stopGenerator(r);
+                    disconnect(r);
+                    rows.remove(r);
+                    persistNow.run();
+                });
+            }
+
+            @Override
+            protected void updateItem(Void v, boolean empty) {
+                super.updateItem(v, empty);
+                if (empty || getIndex() < 0 || getIndex() >= getTableView().getItems().size()) {
+                    setGraphic(null);
+                    return;
+                }
                 setGraphic(box);
             }
         };

@@ -77,6 +77,15 @@ public final class ReceiversPane extends BorderPane {
         form.setPadding(new Insets(0, 0, 8, 0));
 
         TableView<ReceiverRow> table = new TableView<>(rows);
+        // 2026-08-04: column layout restructure per Marty's UI ask.
+        // Actions (start/stop) moves to the FRONT for immediate reach;
+        // the old right-hand tail collapses into a single Config column
+        // holding cog + delete + shield (strict-mode only) so nothing
+        // gets clipped when the table narrows.
+        TableColumn<ReceiverRow, Void> actionsCol = new TableColumn<>("Actions");
+        actionsCol.setCellFactory(makeActionsCellFactory());
+        actionsCol.setPrefWidth(90);
+        actionsCol.setSortable(false);
         TableColumn<ReceiverRow, String> nameCol = new TableColumn<>("Name");
         nameCol.setCellValueFactory(d -> d.getValue().name);
         nameCol.setPrefWidth(140);
@@ -98,14 +107,22 @@ public final class ReceiversPane extends BorderPane {
         TableColumn<ReceiverRow, Boolean> enforceCol = new TableColumn<>("Enforce handshake");
         enforceCol.setCellValueFactory(d -> d.getValue().enforceHandshake);
         enforceCol.setCellFactory(makeEnforceCellFactory());
-        enforceCol.setPrefWidth(140);
+        // 170 not 140 — the shorter width truncated the header to
+        // 'Enforce hand…' in the 1600 px screenshot on 2026-08-04.
+        enforceCol.setPrefWidth(170);
         enforceCol.setSortable(false);
-        TableColumn<ReceiverRow, Void> actionsCol = new TableColumn<>("Actions");
-        actionsCol.setCellFactory(makeActionsCellFactory());
-        actionsCol.setPrefWidth(170);
-        actionsCol.setSortable(false);
-        table.getColumns().addAll(nameCol, portCol, statusCol, countCol, enforceCol, actionsCol);
+        TableColumn<ReceiverRow, Void> configCol = new TableColumn<>("Config");
+        configCol.setCellFactory(makeConfigCellFactory());
+        configCol.setPrefWidth(130);
+        configCol.setSortable(false);
+        table.getColumns().addAll(actionsCol, nameCol, portCol, statusCol, countCol,
+                enforceCol, configCol);
         table.setPrefHeight(220);
+        // CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS: distributes any leftover
+        // horizontal space across all columns proportionally, so we don't
+        // get a phantom empty trailing column (JavaFX's default filler)
+        // and columns adapt if the operator resizes the window.
+        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
 
         // Inline validation hint: shown in red under the form when the user
         // clicks Add with empty or invalid fields. Blank while the fields
@@ -328,46 +345,30 @@ public final class ReceiversPane extends BorderPane {
 
     // ---------- Actions column cell factory ----------
 
+    /**
+     * Cell factory for the leading "Actions" column: just Start + Stop.
+     * Moved to the front of the row 2026-08-04 so the icons are always
+     * reachable regardless of how narrow the table gets. Config cog +
+     * delete + shield live in the trailing "Config" column now.
+     */
     private Callback<TableColumn<ReceiverRow, Void>, TableCell<ReceiverRow, Void>>
             makeActionsCellFactory() {
         return col -> new TableCell<>() {
             private final Button startBtn = Icons.iconButton(Feather.PLAY, "Start this receiver");
             private final Button stopBtn  = Icons.iconButton(Feather.SQUARE, "Stop this receiver");
-            // 2026-08-04 (Phase 5): shield icon opens the RegistrationPolicy
-            // dialog. Visible only when the row has enforceHandshake=true —
-            // dumb-mode receivers accept everything by definition, no policy
-            // to configure. Placed BEFORE the settings cog so the shield
-            // sits next to the strict-mode toggle it depends on.
-            private final Button policyBtn = Icons.iconButton(Feather.SHIELD,
-                    "Edit registration policy — strict mode only");
-            // 2026-08-01 (SkyLord): cog opens the full-property edit dialog.
-            // Saving stops the receiver if it was running — same contract as
-            // the transmitter edit. Sits between stop and remove because
-            // that's the natural reading order (start → stop → edit → remove).
-            private final Button editBtn = Icons.iconButton(Feather.SETTINGS, "Edit — saving stops this receiver");
-            private final Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2, "Remove this receiver");
             private final HBox box;
             /** Row we're currently bound to, so we can unhook the listener on rebind. */
             private ReceiverRow boundRow;
             /** Listener that repaints the Play button when the row's status flips. */
             private final javafx.beans.value.ChangeListener<String> statusListener =
                     (obs, oldV, newV) -> paintStartButton(newV);
-            /** Listener that hides the policy button when strict mode goes off. */
-            private final javafx.beans.value.ChangeListener<Boolean> enforceListener =
-                    (obs, oldV, newV) -> paintPolicyButton(newV != null && newV);
 
             {
                 startBtn.setFocusTraversable(false);
                 stopBtn.setFocusTraversable(false);
-                policyBtn.setFocusTraversable(false);
-                editBtn.setFocusTraversable(false);
-                removeBtn.setFocusTraversable(false);
                 startBtn.getStyleClass().add("flat");
                 stopBtn.getStyleClass().add("flat");
-                policyBtn.getStyleClass().add("flat");
-                editBtn.getStyleClass().add("flat");
-                removeBtn.getStyleClass().add("flat");
-                box = new HBox(4, startBtn, stopBtn, policyBtn, editBtn, removeBtn);
+                box = new HBox(4, startBtn, stopBtn);
                 box.setAlignment(Pos.CENTER_LEFT);
                 startBtn.setOnAction(e -> {
                     ReceiverRow r = getTableView().getItems().get(getIndex());
@@ -377,32 +378,12 @@ public final class ReceiversPane extends BorderPane {
                     ReceiverRow r = getTableView().getItems().get(getIndex());
                     stopRow(r);
                 });
-                policyBtn.setOnAction(e -> {
-                    ReceiverRow r = getTableView().getItems().get(getIndex());
-                    editPolicy(r);
-                });
-                editBtn.setOnAction(e -> {
-                    ReceiverRow r = getTableView().getItems().get(getIndex());
-                    editRow(r);
-                });
-                removeBtn.setOnAction(e -> {
-                    ReceiverRow r = getTableView().getItems().get(getIndex());
-                    removeRow(r);
-                });
-            }
-
-            /** Show/hide the policy button depending on strict-mode state. */
-            private void paintPolicyButton(boolean strict) {
-                policyBtn.setVisible(strict);
-                policyBtn.setManaged(strict);
             }
 
             /**
              * Colour the Play (start) button per current status:
              * <ul><li>running → AtlantaFX 'success' style (green)</li>
              *     <li>anything else → AtlantaFX 'danger' style (red)</li></ul>
-             * These are semantic style classes, so the actual colour follows
-             * whichever theme is active.
              */
             private void paintStartButton(String status) {
                 startBtn.getStyleClass().removeAll("success", "danger");
@@ -416,10 +397,8 @@ public final class ReceiversPane extends BorderPane {
             @Override
             protected void updateItem(Void v, boolean empty) {
                 super.updateItem(v, empty);
-                // Unhook from any previously-bound row's listeners.
                 if (boundRow != null) {
                     boundRow.status.removeListener(statusListener);
-                    boundRow.enforceHandshake.removeListener(enforceListener);
                     boundRow = null;
                 }
                 if (empty || getIndex() < 0 || getIndex() >= getTableView().getItems().size()) {
@@ -429,8 +408,93 @@ public final class ReceiversPane extends BorderPane {
                 ReceiverRow row = getTableView().getItems().get(getIndex());
                 boundRow = row;
                 row.status.addListener(statusListener);
-                row.enforceHandshake.addListener(enforceListener);
                 paintStartButton(row.status.get());
+                setGraphic(box);
+            }
+        };
+    }
+
+    /**
+     * Cell factory for the trailing "Config" column: cog + delete + shield.
+     * The shield (RegistrationPolicy editor, Phase 5) is visible only when
+     * the row has {@code enforceHandshake=true}. All three buttons use the
+     * same flat icon-button style as the leading Actions column so they
+     * look uniform across the row.
+     *
+     * <p>Merged 2026-08-04 from the old "Actions" tail column that used
+     * to hold start/stop/cog/delete/shield — the cluster was too wide to
+     * fit reliably. Splitting into leading Actions (start/stop) + trailing
+     * Config (cog/delete/shield) keeps every icon on-screen.
+     */
+    private Callback<TableColumn<ReceiverRow, Void>, TableCell<ReceiverRow, Void>>
+            makeConfigCellFactory() {
+        return col -> new TableCell<>() {
+            // Cog opens the full-property edit dialog. Saving stops the
+            // receiver if it was running — same contract as the transmitter.
+            private final Button editBtn = Icons.iconButton(Feather.SETTINGS,
+                    "Edit — saving stops this receiver");
+            // Shield opens the RegistrationPolicy dialog (Phase 5). Visible
+            // only when strict mode is on. Same flat style as siblings.
+            private final Button policyBtn = Icons.iconButton(Feather.SHIELD,
+                    "Edit registration policy — strict mode only");
+            private final Button removeBtn = Icons.dangerIconButton(Feather.TRASH_2,
+                    "Remove this receiver");
+            private final HBox box;
+            private ReceiverRow boundRow;
+            /** Listener that hides the policy button when strict mode goes off. */
+            private final javafx.beans.value.ChangeListener<Boolean> enforceListener =
+                    (obs, oldV, newV) -> paintPolicyButton(newV != null && newV);
+
+            {
+                editBtn.setFocusTraversable(false);
+                policyBtn.setFocusTraversable(false);
+                removeBtn.setFocusTraversable(false);
+                editBtn.getStyleClass().add("flat");
+                policyBtn.getStyleClass().add("flat");
+                removeBtn.getStyleClass().add("flat");
+                box = new HBox(4, editBtn, policyBtn, removeBtn);
+                box.setAlignment(Pos.CENTER_LEFT);
+                editBtn.setOnAction(e -> {
+                    ReceiverRow r = getTableView().getItems().get(getIndex());
+                    editRow(r);
+                });
+                policyBtn.setOnAction(e -> {
+                    ReceiverRow r = getTableView().getItems().get(getIndex());
+                    editPolicy(r);
+                });
+                removeBtn.setOnAction(e -> {
+                    ReceiverRow r = getTableView().getItems().get(getIndex());
+                    removeRow(r);
+                });
+            }
+
+            /**
+             * Toggle the policy button's visibility WITHOUT changing its
+             * managed flag — keeping managed=true reserves the button's
+             * slot in the HBox so the sibling cog + delete icons stay in
+             * the same horizontal position whether the row is strict or
+             * dumb mode. Otherwise the trash icon slides left on dumb-mode
+             * rows and looks misaligned against strict-mode rows above/
+             * below it (caught by vision inspection 2026-08-04 20:08 UTC).
+             */
+            private void paintPolicyButton(boolean strict) {
+                policyBtn.setVisible(strict);
+            }
+
+            @Override
+            protected void updateItem(Void v, boolean empty) {
+                super.updateItem(v, empty);
+                if (boundRow != null) {
+                    boundRow.enforceHandshake.removeListener(enforceListener);
+                    boundRow = null;
+                }
+                if (empty || getIndex() < 0 || getIndex() >= getTableView().getItems().size()) {
+                    setGraphic(null);
+                    return;
+                }
+                ReceiverRow row = getTableView().getItems().get(getIndex());
+                boundRow = row;
+                row.enforceHandshake.addListener(enforceListener);
                 paintPolicyButton(row.enforceHandshake.get());
                 setGraphic(box);
             }
