@@ -67,6 +67,7 @@ public final class TransmittersPane extends BorderPane {
 
     /** Message type entries for the picker dropdown. */
     private enum MsgType {
+        AUTO_START("Auto-Start (Register + Sensor + Detections)"),
         REGISTRATION("Registration"),
         REGISTRATION_ACK("RegistrationAck"),
         STATUS_REPORT("StatusReport"),
@@ -311,6 +312,7 @@ public final class TransmittersPane extends BorderPane {
     private void handleSend(TxRow row, MsgType type) {
         String nodeId = row.nodeId; // stable per row
         switch (type) {
+            case AUTO_START        -> startAutoStart(row);
             case REGISTRATION      -> withMsg(row, MessageDialogs.registration(nodeId));
             case REGISTRATION_ACK  -> withMsg(row, MessageDialogs.registrationAck(nodeId));
             case STATUS_REPORT     -> withMsg(row, MessageDialogs.statusReport(nodeId));
@@ -322,6 +324,162 @@ public final class TransmittersPane extends BorderPane {
             case ALERT_ACK         -> withMsg(row, MessageDialogs.alertAck(nodeId));
             case ERROR             -> withMsg(row, MessageDialogs.error(nodeId));
         }
+    }
+
+    // ---------- Auto-Start cascade ----------
+
+    /**
+     * One-click SAPIENT bring-up cascade (2026-08-04 ask):
+     * Registration → (wait for ack) → sensor generator (moving + CONE FOV)
+     * → detection generator (20 km radius, drones, moving).
+     *
+     * <p>Requires the row to be in strict mode ({@code enforceHandshake=true}).
+     * The handshake itself is owned by {@link com.mdudel.sapient.net.SapientEdgeClient}
+     * (Phase 2 / 3 code) — all this method does is:
+     * <ol>
+     *   <li>if the row is disconnected, call {@link #connect(TxRow)} first;</li>
+     *   <li>watch the row's status property until it flips to "connected"
+     *       (which is the label {@code SapientEdgeClient} publishes when
+     *       it reaches {@code HandshakeState.REGISTERED});</li>
+     *   <li>start the sensor generator with {@link AutoStartRecipe#sensorConfig};</li>
+     *   <li>start the detection generator with {@link AutoStartRecipe#detectionConfig}.</li>
+     * </ol>
+     * If the handshake fails (peer rejects Registration, socket times out,
+     * etc.) the cascade aborts and surfaces the failure in the row's stream.
+     */
+    private void startAutoStart(TxRow row) {
+        if (!row.enforceHandshake.get()) {
+            append(row, "! auto-start requires strict mode — tick 'Enforce handshake' on this row first");
+            return;
+        }
+        if (generators.containsKey(row.name.get())) {
+            append(row, "! detection generator already running — stop it first before auto-start");
+            return;
+        }
+        if (sensorGenerators.containsKey(row.name.get())) {
+            append(row, "! sensor generator already running — stop it first before auto-start");
+            return;
+        }
+
+        append(row, "◆ AUTO-START: cascade beginning — handshake → sensor → detections");
+
+        // If we're already connected, skip straight to starting the generators.
+        TxHandle existing = live.get(row.name.get());
+        if (existing != null && existing.isConnected()) {
+            append(row, "◆ AUTO-START: already registered, launching generators");
+            launchAutoStartGenerators(row);
+            return;
+        }
+
+        // Otherwise: subscribe to the row's status property, wait for it to
+        // flip to "connected" (SapientEdgeClient publishes this label on
+        // HandshakeState.REGISTERED), then launch the generators. If we ever
+        // hit a terminal error state ("error: ..." / "disconnected" after
+        // the handshake started), abort cleanly.
+        javafx.beans.value.ChangeListener<String> waiter = new javafx.beans.value.ChangeListener<>() {
+            @Override
+            public void changed(javafx.beans.value.ObservableValue<? extends String> obs,
+                                String oldV, String newV) {
+                if (newV == null) return;
+                if ("connected".equals(newV)) {
+                    row.status.removeListener(this);
+                    Platform.runLater(() -> {
+                        append(row, "◆ AUTO-START: handshake complete, launching generators");
+                        launchAutoStartGenerators(row);
+                    });
+                } else if (newV.startsWith("error")) {
+                    row.status.removeListener(this);
+                    Platform.runLater(() -> append(row,
+                            "◆ AUTO-START: aborted — handshake failed (" + newV + ")"));
+                }
+            }
+        };
+        row.status.addListener(waiter);
+
+        // If we hooked the listener while the row is already connected (race),
+        // fire once manually so we don't wait forever.
+        if ("connected".equals(row.status.get())) {
+            row.status.removeListener(waiter);
+            append(row, "◆ AUTO-START: already registered (post-hook race), launching generators");
+            launchAutoStartGenerators(row);
+            return;
+        }
+
+        append(row, "◆ AUTO-START: initiating Connect — waiting for Registration → RegistrationAck");
+        connect(row);
+    }
+
+    /**
+     * Start both auto-start generators on a row that's already REGISTERED.
+     * Uses {@link AutoStartRecipe} for the sane demo defaults. Runs on the
+     * FX thread; safe against the row being disconnected between the
+     * handshake and this call (each generator start rechecks isConnected).
+     */
+    private void launchAutoStartGenerators(TxRow row) {
+        TxHandle tx = live.get(row.name.get());
+        if (tx == null || !tx.isConnected()) {
+            append(row, "◆ AUTO-START: connection dropped before generators could start");
+            return;
+        }
+
+        // 1. Sensor generator (moving + CONE FOV) first — sends the initial
+        //    StatusReport(s) with the sensor's own location and FOV so any
+        //    fusion viewer knows where the sensor IS before we start dropping
+        //    detections on its map.
+        try {
+            SensorGenerator.Config sensorCfg = AutoStartRecipe.sensorConfig(row.nodeId);
+            SensorGenerator sensor = new SensorGenerator(sensorCfg, msg -> {
+                try {
+                    tx.send(msg);
+                    Platform.runLater(() -> {
+                        row.sent.set(row.sent.get() + 1);
+                        if (row.sent.get() % 10 == 0) {
+                            append(row, "⇒ sensor sent " + row.sent.get() + " status reports");
+                        }
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> append(row,
+                            "! auto-start sensor send failed: " + ex.getMessage()));
+                }
+            });
+            sensorGenerators.put(row.name.get(), sensor);
+            sensor.start();
+            append(row, "📡 AUTO-START: sensor generator running (moving, CONE FOV, 20 km range)");
+        } catch (Exception ex) {
+            append(row, "! auto-start: sensor generator failed to start: " + ex.getMessage());
+            return;
+        }
+
+        // 2. Detection generator (20 km radius drones, moving).
+        try {
+            DetectionGenerator.Config detCfg = AutoStartRecipe.detectionConfig(row.nodeId);
+            DetectionGenerator gen = new DetectionGenerator(detCfg, msg -> {
+                try {
+                    tx.send(msg);
+                    Platform.runLater(() -> {
+                        row.sent.set(row.sent.get() + 1);
+                        if (row.sent.get() % 20 == 0) {
+                            append(row, "→ detection generator sent " + row.sent.get() + " tracks");
+                        }
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> append(row,
+                            "! auto-start detection send failed: " + ex.getMessage()));
+                }
+            });
+            generators.put(row.name.get(), gen);
+            gen.start();
+            row.generating.set(true);
+            row.activity.set(String.format("▶ auto-start: %d drones @ %d ms (20 km, moving)",
+                    detCfg.trackCount, detCfg.tickMs));
+            append(row, "▶ AUTO-START: detection generator running (" + detCfg.trackCount
+                    + " drones, 20 km radius, moving)");
+        } catch (Exception ex) {
+            append(row, "! auto-start: detection generator failed to start: " + ex.getMessage());
+            return;
+        }
+
+        append(row, "◆ AUTO-START: cascade complete — sensor + detections running until Stop / Disconnect");
     }
 
     private void withMsg(TxRow row, Optional<SapientMessage> msgOpt) {
