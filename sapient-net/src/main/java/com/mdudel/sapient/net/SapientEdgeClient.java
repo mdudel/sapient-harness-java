@@ -211,36 +211,47 @@ public final class SapientEdgeClient implements AutoCloseable {
      * Graceful shutdown: sends a GOODBYE StatusReport (§4.8) if currently
      * REGISTERED, then closes the socket and cancels scheduled work. Safe
      * to call multiple times; safe to call from any state.
+     *
+     * <p>Note: we deliberately do <b>not</b> hold {@code synchronized(this)}
+     * across {@link SapientTransmitter#close()}. The transmitter close waits
+     * for Netty's {@code channelInactive} callback, which lands on
+     * {@link InternalListener#onDisconnected} and needs the monitor itself
+     * to clear the pending-ack / heartbeat state. Holding the monitor here
+     * would deadlock.
      */
     @Override
     public void close() {
+        SapientTransmitter txToClose;
+        boolean sendGoodbye;
         synchronized (this) {
             if (closed) return;
             closed = true;
             cancelAckTimeout();
             cancelHeartbeat();
-            if (state.get() == HandshakeState.REGISTERED
-                    && transmitter != null && transmitter.isConnected()) {
-                try {
-                    SapientMessage goodbye = MessageFactory.statusReport(identity.nodeId(),
-                            StatusReport.System.SYSTEM_GOODBYE,
-                            "default",
-                            null, null, null,
-                            null, null, null);
-                    transmitter.send(goodbye);
-                    state.set(HandshakeState.GOODBYE);
-                    // Give the write a short moment to flush before we shut the socket.
-                    try { Thread.sleep(50); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-                } catch (Exception e) {
-                    log.debug("[{}] GOODBYE send failed: {}", name, e.toString());
-                }
-            }
-            if (transmitter != null) {
-                try { transmitter.close(); } catch (Exception ignored) { }
-                transmitter = null;
-            }
-            state.set(HandshakeState.CLOSED);
+            sendGoodbye = state.get() == HandshakeState.REGISTERED
+                    && transmitter != null && transmitter.isConnected();
+            txToClose = transmitter;
+            transmitter = null;
         }
+        if (sendGoodbye && txToClose != null) {
+            try {
+                SapientMessage goodbye = MessageFactory.statusReport(identity.nodeId(),
+                        StatusReport.System.SYSTEM_GOODBYE,
+                        "default",
+                        null, null, null,
+                        null, null, null);
+                txToClose.send(goodbye);
+                state.set(HandshakeState.GOODBYE);
+                // Give the write a short moment to flush before we shut the socket.
+                try { Thread.sleep(50); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+            } catch (Exception e) {
+                log.debug("[{}] GOODBYE send failed: {}", name, e.toString());
+            }
+        }
+        if (txToClose != null) {
+            try { txToClose.close(); } catch (Exception ignored) { }
+        }
+        state.set(HandshakeState.CLOSED);
         scheduler.shutdownNow();
     }
 
@@ -427,18 +438,21 @@ public final class SapientEdgeClient implements AutoCloseable {
         @Override
         public void onDisconnected(SocketAddress peer) {
             log.debug("[{}] socket disconnected from {}", name, peer);
+            CompletableFuture<RegistrationAck> abortAck = null;
+            boolean shouldReconnect;
             synchronized (SapientEdgeClient.this) {
                 lastDisconnectAt = Instant.now();
                 cancelHeartbeat();
-            }
-            // Cancel any pending ack — reconnect logic will re-arm.
-            synchronized (SapientEdgeClient.this) {
                 if (pendingAck != null && !pendingAck.isDone()) {
-                    pendingAck.completeExceptionally(new IllegalStateException("socket closed"));
+                    abortAck = pendingAck;
                     pendingAck = null;
                 }
+                shouldReconnect = !closed && state.get() != HandshakeState.REJECTED;
             }
-            if (!closed && state.get() != HandshakeState.REJECTED) {
+            if (abortAck != null) {
+                abortAck.completeExceptionally(new IllegalStateException("socket closed"));
+            }
+            if (shouldReconnect) {
                 scheduleReconnect();
             }
         }
