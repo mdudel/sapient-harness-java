@@ -1,6 +1,6 @@
 # SAPIENT Connection & Hand-shake (BSI Flex 335 v2.0)
 
-_A concise, implementation-oriented walk-through of how two SAPIENT peers – typically an **edge
+_An implementation-oriented walk-through of how two SAPIENT peers – typically an **edge
 node** (sensor / effector) and a **fusion node** – discover each other, register, and exchange their first
 messages._
 
