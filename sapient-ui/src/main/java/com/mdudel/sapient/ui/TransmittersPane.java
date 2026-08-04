@@ -160,7 +160,17 @@ public final class TransmittersPane extends BorderPane {
                 activityCol, enforceCol, actionsCol);
         table.setPrefHeight(200);
 
-        VBox top = new VBox(new Label("Configured transmitters"), form, table);
+        // Inline validation hint (see ReceiversPane for the 2026-08-04
+        // rationale -- silent-fail on Add was mistaken for the button
+        // being broken).
+        Label formHint = new Label("");
+        formHint.setStyle("-fx-text-fill: -color-danger-fg;");
+        formHint.setWrapText(true);
+        nameField.textProperty().addListener((o, a, b) -> formHint.setText(""));
+        hostField.textProperty().addListener((o, a, b) -> formHint.setText(""));
+        portField.textProperty().addListener((o, a, b) -> formHint.setText(""));
+
+        VBox top = new VBox(new Label("Configured transmitters"), form, formHint, table);
 
         // --- Middle: message-type picker + send controls ---
         ChoiceBox<MsgType> typePicker = new ChoiceBox<>(FXCollections.observableArrayList(MsgType.values()));
@@ -210,16 +220,38 @@ public final class TransmittersPane extends BorderPane {
             String name = nameField.getText().trim();
             String host = hostField.getText().trim();
             String portText = portField.getText().trim();
-            if (name.isEmpty() || host.isEmpty() || portText.isEmpty()) return;
+            java.util.List<String> missing = new java.util.ArrayList<>();
+            if (name.isEmpty()) missing.add("name");
+            if (host.isEmpty()) missing.add("host");
+            if (portText.isEmpty()) missing.add("port");
+            if (!missing.isEmpty()) {
+                formHint.setText("Missing " + String.join(", ", missing)
+                        + " — fill in every field before clicking Add.");
+                return;
+            }
             int port;
             try { port = Integer.parseInt(portText); }
-            catch (NumberFormatException ex) { return; }
+            catch (NumberFormatException ex) {
+                formHint.setText("Port must be an integer (1-65535), got '" + portText + "'.");
+                return;
+            }
+            if (port < 1 || port > 65535) {
+                formHint.setText("Port must be between 1 and 65535, got " + port + ".");
+                return;
+            }
+            for (TxRow existing : rows) {
+                if (existing.name.get().equals(name)) {
+                    formHint.setText("A transmitter named '" + name + "' already exists.");
+                    return;
+                }
+            }
             TxRow newRow = new TxRow(name, host, port);
             rows.add(newRow);
             table.getSelectionModel().select(newRow);   // <-- auto-select so the next Send lands
             nameField.clear();
             hostField.clear();
             portField.clear();
+            formHint.setText("");
             persistNow.run();
         });
 

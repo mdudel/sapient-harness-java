@@ -105,7 +105,19 @@ public final class ReceiversPane extends BorderPane {
         table.getColumns().addAll(nameCol, portCol, statusCol, countCol, enforceCol, actionsCol);
         table.setPrefHeight(220);
 
-        VBox top = new VBox(new Label("Configured receivers"), form, table);
+        // Inline validation hint: shown in red under the form when the user
+        // clicks Add with empty or invalid fields. Blank while the fields
+        // are being edited so it doesn't nag mid-type. Fix 2026-08-04 for
+        // Marty's 12:01 UTC report -- previous silent-return-on-empty made
+        // the Add button feel dead when a user forgot a field.
+        Label formHint = new Label("");
+        formHint.setStyle("-fx-text-fill: -color-danger-fg;");
+        formHint.setWrapText(true);
+        // Clear hint as soon as the user starts editing either field again.
+        nameField.textProperty().addListener((o, a, b) -> formHint.setText(""));
+        portField.textProperty().addListener((o, a, b) -> formHint.setText(""));
+
+        VBox top = new VBox(new Label("Configured receivers"), form, formHint, table);
 
         // --- Bottom: message stream ---
         ListView<String> streamView = new ListView<>(stream);
@@ -118,15 +130,42 @@ public final class ReceiversPane extends BorderPane {
         addBtn.setOnAction(e -> {
             String name = nameField.getText().trim();
             String portText = portField.getText().trim();
-            if (name.isEmpty() || portText.isEmpty()) return;
+            if (name.isEmpty() && portText.isEmpty()) {
+                formHint.setText("Enter a name and port before clicking Add.");
+                return;
+            }
+            if (name.isEmpty()) {
+                formHint.setText("Name is required.");
+                return;
+            }
+            if (portText.isEmpty()) {
+                formHint.setText("Port is required.");
+                return;
+            }
             int port;
             try { port = Integer.parseInt(portText); }
-            catch (NumberFormatException ex) { return; }
+            catch (NumberFormatException ex) {
+                formHint.setText("Port must be an integer (1-65535), got '" + portText + "'.");
+                return;
+            }
+            if (port < 1 || port > 65535) {
+                formHint.setText("Port must be between 1 and 65535, got " + port + ".");
+                return;
+            }
+            // Guard against duplicate names -- SapientReceiver is keyed on name
+            // and a duplicate would clash silently in the live/generators maps.
+            for (ReceiverRow existing : rows) {
+                if (existing.name.get().equals(name)) {
+                    formHint.setText("A receiver named '" + name + "' already exists.");
+                    return;
+                }
+            }
             ReceiverRow newRow = new ReceiverRow(name, port);
             rows.add(newRow);
             table.getSelectionModel().select(newRow);   // <-- auto-select so the next action lands
             nameField.clear();
             portField.clear();
+            formHint.setText("");
             persistNow.run();
         });
 
