@@ -5,9 +5,11 @@
 package com.mdudel.sapient.ui;
 
 import com.mdudel.sapient.core.validation.SapientMessageValidator;
+import com.mdudel.sapient.net.RegistrationPolicySpec;
 import com.mdudel.sapient.net.SapientMessageListener;
 import com.mdudel.sapient.net.SapientReceiver;
 import com.mdudel.sapient.ui.dialog.EditDialogs;
+import com.mdudel.sapient.ui.dialog.PolicyDialog;
 import com.mdudel.sapient.ui.persist.SessionStore;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -211,11 +213,15 @@ public final class ReceiversPane extends BorderPane {
         SapientReceiver rx;
         if (enforce) {
             if (row.selfNodeId == null) row.selfNodeId = UUID.randomUUID().toString();
-            rx = SapientReceiver.builder(row.name.get(), row.port.get())
+            SapientReceiver.Builder builder = SapientReceiver.builder(row.name.get(), row.port.get())
                     .listener(listener)
                     .enforceHandshake(true)
-                    .selfNodeId(row.selfNodeId)
-                    .build();
+                    .selfNodeId(row.selfNodeId);
+            if (row.policySpec != null && !row.policySpec.isPermissive()) {
+                builder.registrationPolicySpec(row.policySpec);
+                append(row, "🛡 policy: " + describePolicy(row.policySpec));
+            }
+            rx = builder.build();
             append(row, "★ STRICT mode — fusion nodeId=" + row.selfNodeId
                     + " (BSI Flex 335 v2.0 handshake enforced)");
         } else {
@@ -279,6 +285,47 @@ public final class ReceiversPane extends BorderPane {
         persistNow.run();
     }
 
+    /**
+     * Open the {@link PolicyDialog} for a row. Available only when the row
+     * has {@code enforceHandshake=true} — dumb-mode receivers accept
+     * everything by definition. If the row is running, stops it first
+     * (same UX pattern as editing the port).
+     */
+    private void editPolicy(ReceiverRow row) {
+        if (row == null) return;
+        if (!row.enforceHandshake.get()) {
+            append(row, "! policy editor available only in strict mode — tick Enforce handshake first");
+            return;
+        }
+        boolean wasLive = live.containsKey(row.name.get());
+        if (wasLive) stopRow(row);
+        var out = PolicyDialog.edit(row.name.get(), row.policySpec);
+        if (out.isEmpty()) return;
+        row.policySpec = out.get();
+        append(row, "🛡 policy updated: " + describePolicy(row.policySpec)
+                + (wasLive ? " (was running, now STOPPED — press Start when ready)" : ""));
+        persistNow.run();
+    }
+
+    /** Short one-line summary of a policy spec for log messages. */
+    private static String describePolicy(RegistrationPolicySpec s) {
+        if (s == null || s.isPermissive()) return "accept all";
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        if (s.requiredIcdVersion != null && !s.requiredIcdVersion.isBlank()) {
+            parts.add("icd='" + s.requiredIcdVersion + "'");
+        }
+        if (s.allowedNodeTypes != null && !s.allowedNodeTypes.isEmpty()) {
+            parts.add("types=" + s.allowedNodeTypes);
+        }
+        if (s.allowedNodeIds != null && !s.allowedNodeIds.isEmpty()) {
+            parts.add("allow=" + s.allowedNodeIds.size() + " id(s)");
+        }
+        if (s.deniedNodeIds != null && !s.deniedNodeIds.isEmpty()) {
+            parts.add("deny=" + s.deniedNodeIds.size() + " id(s)");
+        }
+        return String.join(", ", parts);
+    }
+
     // ---------- Actions column cell factory ----------
 
     private Callback<TableColumn<ReceiverRow, Void>, TableCell<ReceiverRow, Void>>
@@ -286,6 +333,13 @@ public final class ReceiversPane extends BorderPane {
         return col -> new TableCell<>() {
             private final Button startBtn = Icons.iconButton(Feather.PLAY, "Start this receiver");
             private final Button stopBtn  = Icons.iconButton(Feather.SQUARE, "Stop this receiver");
+            // 2026-08-04 (Phase 5): shield icon opens the RegistrationPolicy
+            // dialog. Visible only when the row has enforceHandshake=true —
+            // dumb-mode receivers accept everything by definition, no policy
+            // to configure. Placed BEFORE the settings cog so the shield
+            // sits next to the strict-mode toggle it depends on.
+            private final Button policyBtn = Icons.iconButton(Feather.SHIELD,
+                    "Edit registration policy — strict mode only");
             // 2026-08-01 (SkyLord): cog opens the full-property edit dialog.
             // Saving stops the receiver if it was running — same contract as
             // the transmitter edit. Sits between stop and remove because
@@ -298,17 +352,22 @@ public final class ReceiversPane extends BorderPane {
             /** Listener that repaints the Play button when the row's status flips. */
             private final javafx.beans.value.ChangeListener<String> statusListener =
                     (obs, oldV, newV) -> paintStartButton(newV);
+            /** Listener that hides the policy button when strict mode goes off. */
+            private final javafx.beans.value.ChangeListener<Boolean> enforceListener =
+                    (obs, oldV, newV) -> paintPolicyButton(newV != null && newV);
 
             {
                 startBtn.setFocusTraversable(false);
                 stopBtn.setFocusTraversable(false);
+                policyBtn.setFocusTraversable(false);
                 editBtn.setFocusTraversable(false);
                 removeBtn.setFocusTraversable(false);
                 startBtn.getStyleClass().add("flat");
                 stopBtn.getStyleClass().add("flat");
+                policyBtn.getStyleClass().add("flat");
                 editBtn.getStyleClass().add("flat");
                 removeBtn.getStyleClass().add("flat");
-                box = new HBox(4, startBtn, stopBtn, editBtn, removeBtn);
+                box = new HBox(4, startBtn, stopBtn, policyBtn, editBtn, removeBtn);
                 box.setAlignment(Pos.CENTER_LEFT);
                 startBtn.setOnAction(e -> {
                     ReceiverRow r = getTableView().getItems().get(getIndex());
@@ -318,6 +377,10 @@ public final class ReceiversPane extends BorderPane {
                     ReceiverRow r = getTableView().getItems().get(getIndex());
                     stopRow(r);
                 });
+                policyBtn.setOnAction(e -> {
+                    ReceiverRow r = getTableView().getItems().get(getIndex());
+                    editPolicy(r);
+                });
                 editBtn.setOnAction(e -> {
                     ReceiverRow r = getTableView().getItems().get(getIndex());
                     editRow(r);
@@ -326,6 +389,12 @@ public final class ReceiversPane extends BorderPane {
                     ReceiverRow r = getTableView().getItems().get(getIndex());
                     removeRow(r);
                 });
+            }
+
+            /** Show/hide the policy button depending on strict-mode state. */
+            private void paintPolicyButton(boolean strict) {
+                policyBtn.setVisible(strict);
+                policyBtn.setManaged(strict);
             }
 
             /**
@@ -347,9 +416,10 @@ public final class ReceiversPane extends BorderPane {
             @Override
             protected void updateItem(Void v, boolean empty) {
                 super.updateItem(v, empty);
-                // Unhook from any previously-bound row's status listener.
+                // Unhook from any previously-bound row's listeners.
                 if (boundRow != null) {
                     boundRow.status.removeListener(statusListener);
+                    boundRow.enforceHandshake.removeListener(enforceListener);
                     boundRow = null;
                 }
                 if (empty || getIndex() < 0 || getIndex() >= getTableView().getItems().size()) {
@@ -359,7 +429,9 @@ public final class ReceiversPane extends BorderPane {
                 ReceiverRow row = getTableView().getItems().get(getIndex());
                 boundRow = row;
                 row.status.addListener(statusListener);
+                row.enforceHandshake.addListener(enforceListener);
                 paintStartButton(row.status.get());
+                paintPolicyButton(row.enforceHandshake.get());
                 setGraphic(box);
             }
         };
@@ -417,7 +489,8 @@ public final class ReceiversPane extends BorderPane {
         List<SessionStore.SavedReceiver> out = new ArrayList<>();
         for (ReceiverRow r : rows) {
             out.add(new SessionStore.SavedReceiver(r.name.get(), r.port.get(),
-                    r.enforceHandshake.get(), r.selfNodeId));
+                    r.enforceHandshake.get(), r.selfNodeId,
+                    (r.policySpec != null && !r.policySpec.isPermissive()) ? r.policySpec : null));
         }
         return out;
     }
@@ -430,6 +503,7 @@ public final class ReceiversPane extends BorderPane {
             ReceiverRow row = new ReceiverRow(s.name, s.port);
             row.enforceHandshake.set(s.enforceHandshake);
             row.selfNodeId = s.selfNodeId;
+            row.policySpec = s.policy;
             rows.add(row);
         }
     }
@@ -504,6 +578,11 @@ public final class ReceiversPane extends BorderPane {
          * pay for a UUID they don't need.
          */
         String selfNodeId;
+        /**
+         * Registration policy for strict-mode receivers (Phase 5). Nullable
+         * — null / permissive spec = accept all peers.
+         */
+        RegistrationPolicySpec policySpec;
 
         ReceiverRow(String name, int port) {
             this.name = new javafx.beans.property.SimpleStringProperty(name);

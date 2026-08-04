@@ -93,6 +93,13 @@ public final class SapientReceiver implements AutoCloseable {
     private final boolean enforceHandshake;
     private final String selfNodeId;
     private final RegistrationPolicy registrationPolicy;
+    /**
+     * Optional spec used to derive a node_id-aware policy per Registration.
+     * When set, takes precedence over {@link #registrationPolicy} because
+     * only the spec path knows the envelope UUID needed for allow/deny
+     * list evaluation.
+     */
+    private final RegistrationPolicySpec registrationPolicySpec;
 
     private volatile EventLoopGroup bossGroup;
     private volatile EventLoopGroup workerGroup;
@@ -114,18 +121,20 @@ public final class SapientReceiver implements AutoCloseable {
 
     /** Legacy constructor — dumb mode, no handshake enforcement. */
     public SapientReceiver(String name, int port, SapientMessageListener listener) {
-        this(name, port, listener, false, null, RegistrationPolicy.acceptAll());
+        this(name, port, listener, false, null, RegistrationPolicy.acceptAll(), null);
     }
 
     private SapientReceiver(String name, int port, SapientMessageListener listener,
                             boolean enforceHandshake, String selfNodeId,
-                            RegistrationPolicy policy) {
+                            RegistrationPolicy policy,
+                            RegistrationPolicySpec spec) {
         this.name = Objects.requireNonNull(name);
         this.port = port;
         this.listener = Objects.requireNonNull(listener);
         this.enforceHandshake = enforceHandshake;
         this.selfNodeId = selfNodeId != null ? selfNodeId : UUID.randomUUID().toString();
         this.registrationPolicy = policy != null ? policy : RegistrationPolicy.acceptAll();
+        this.registrationPolicySpec = spec;
         if (enforceHandshake) {
             try { UUID.fromString(this.selfNodeId); } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException("selfNodeId must be a valid UUID", e);
@@ -284,9 +293,18 @@ public final class SapientReceiver implements AutoCloseable {
                     return;
                 }
                 // Valid Registration — apply policy, ack, and register.
+                // Spec path (takes precedence) knows the envelope node_id so
+                // it can enforce allow/deny lists. Fall back to the plain
+                // policy for callers that never set a spec.
                 RegistrationOutcome outcome;
                 try {
-                    outcome = rx.registrationPolicy.evaluate(sm.getRegistration());
+                    if (rx.registrationPolicySpec != null) {
+                        outcome = rx.registrationPolicySpec
+                                .toPolicy(sm.getNodeId())
+                                .evaluate(sm.getRegistration());
+                    } else {
+                        outcome = rx.registrationPolicy.evaluate(sm.getRegistration());
+                    }
                 } catch (Throwable t) {
                     log.warn("[{}] registrationPolicy threw: {}", rx.name, t.toString());
                     outcome = RegistrationOutcome.reject("policy error: " + t.getMessage());
@@ -411,6 +429,7 @@ public final class SapientReceiver implements AutoCloseable {
         private boolean enforceHandshake;
         private String selfNodeId;
         private RegistrationPolicy registrationPolicy;
+        private RegistrationPolicySpec registrationPolicySpec;
 
         private Builder(String name, int port) {
             this.name = name;
@@ -422,9 +441,20 @@ public final class SapientReceiver implements AutoCloseable {
         public Builder selfNodeId(String v) { this.selfNodeId = v; return this; }
         public Builder registrationPolicy(RegistrationPolicy v) { this.registrationPolicy = v; return this; }
 
+        /**
+         * Set a JSON-serialisable policy spec. Takes precedence over any
+         * {@link #registrationPolicy(RegistrationPolicy)} because only the
+         * spec path is envelope-node_id-aware (needed for allow/deny lists).
+         */
+        public Builder registrationPolicySpec(RegistrationPolicySpec v) {
+            this.registrationPolicySpec = v;
+            return this;
+        }
+
         public SapientReceiver build() {
             if (listener == null) throw new IllegalStateException("listener must be set");
-            return new SapientReceiver(name, port, listener, enforceHandshake, selfNodeId, registrationPolicy);
+            return new SapientReceiver(name, port, listener, enforceHandshake, selfNodeId,
+                    registrationPolicy, registrationPolicySpec);
         }
     }
 
@@ -458,6 +488,42 @@ public final class SapientReceiver implements AutoCloseable {
                 RegistrationOutcome ao = a.evaluate(reg);
                 if (!ao.accepted) return ao;
                 return b.evaluate(reg);
+            };
+        }
+
+        /**
+         * Combine two policies — accept if either accepts. First-accept wins;
+         * on double-reject the second reason is returned. Rarely useful in
+         * practice (fusion nodes typically stack AND constraints) but handy
+         * for 'allowlist A OR allowlist B' compositions.
+         */
+        static RegistrationPolicy or(RegistrationPolicy a, RegistrationPolicy b) {
+            return reg -> {
+                RegistrationOutcome ao = a.evaluate(reg);
+                if (ao.accepted) return ao;
+                return b.evaluate(reg);
+            };
+        }
+
+        /**
+         * Reject any peer whose declared {@link Registration.NodeType} is not
+         * in the given allowlist. Empty varargs / null are treated as 'no
+         * constraint' — the operator likely cleared the checkboxes without
+         * meaning 'reject everything'.
+         */
+        static RegistrationPolicy requireNodeType(Registration.NodeType... allowed) {
+            if (allowed == null || allowed.length == 0) return acceptAll();
+            java.util.Set<Registration.NodeType> allow = java.util.Set.of(allowed);
+            return reg -> {
+                java.util.Set<Registration.NodeType> declared = new java.util.LinkedHashSet<>();
+                for (Registration.NodeDefinition nd : reg.getNodeDefinitionList()) {
+                    declared.add(nd.getNodeType());
+                }
+                for (Registration.NodeType t : declared) {
+                    if (allow.contains(t)) return RegistrationOutcome.accept();
+                }
+                return RegistrationOutcome.reject("Declared node types " + declared
+                        + " do not intersect allowlist " + allow);
             };
         }
     }

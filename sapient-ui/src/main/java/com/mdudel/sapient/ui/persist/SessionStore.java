@@ -5,8 +5,10 @@
 package com.mdudel.sapient.ui.persist;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.mdudel.sapient.net.RegistrationPolicySpec;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -40,7 +42,9 @@ public final class SessionStore {
 
     private static final ObjectMapper JSON = new ObjectMapper()
             .setSerializationInclusion(JsonInclude.Include.NON_NULL)
-            .enable(SerializationFeature.INDENT_OUTPUT);
+            .enable(SerializationFeature.INDENT_OUTPUT)
+            // Forward-compat: don't die if a future field lands in an old JAR.
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
 
     private SessionStore() {
     }
@@ -65,16 +69,29 @@ public final class SessionStore {
         public boolean enforceHandshake;
         /** Stable UUID used as this fusion node's {@code node_id} when strict. Nullable. */
         public String selfNodeId;
+        /**
+         * Optional registration policy spec (Phase 5). When null AND
+         * {@link #enforceHandshake} is true, the receiver accepts every
+         * peer (legacy Phase-3 behaviour). When populated, the receiver
+         * gates registrations on ICD version / node type allowlist /
+         * node_id allowlist / node_id denylist.
+         */
+        public RegistrationPolicySpec policy;
 
         public SavedReceiver() {}   // required by Jackson
         public SavedReceiver(String name, int port) {
-            this(name, port, false, null);
+            this(name, port, false, null, null);
         }
         public SavedReceiver(String name, int port, boolean enforceHandshake, String selfNodeId) {
+            this(name, port, enforceHandshake, selfNodeId, null);
+        }
+        public SavedReceiver(String name, int port, boolean enforceHandshake,
+                             String selfNodeId, RegistrationPolicySpec policy) {
             this.name = name;
             this.port = port;
             this.enforceHandshake = enforceHandshake;
             this.selfNodeId = selfNodeId;
+            this.policy = policy;
         }
     }
 
