@@ -45,32 +45,63 @@ public final class SessionStore {
     private SessionStore() {
     }
 
-    /** POJO: a saved receiver (name + port). */
+    /**
+     * POJO: a saved receiver (name + port, plus handshake-enforcement flag
+     * and a stable fusion-side node UUID).
+     *
+     * <p>{@code enforceHandshake} is persisted so a receiver marked strict
+     * in one session comes back up strict on the next. It defaults to false
+     * in the no-arg constructor and via Jackson deserialization when the
+     * field is absent, giving byte-identical behaviour to legacy sessions.
+     *
+     * <p>{@code selfNodeId} is persisted separately so a strict receiver
+     * presents a stable fusion-node identity across restarts. Populated
+     * lazily on first start when null.
+     */
     public static final class SavedReceiver {
         public String name;
         public int port;
+        /** BSI Flex 335 v2.0 handshake enforcement toggle (default false = legacy dumb mode). */
+        public boolean enforceHandshake;
+        /** Stable UUID used as this fusion node's {@code node_id} when strict. Nullable. */
+        public String selfNodeId;
 
         public SavedReceiver() {}   // required by Jackson
         public SavedReceiver(String name, int port) {
+            this(name, port, false, null);
+        }
+        public SavedReceiver(String name, int port, boolean enforceHandshake, String selfNodeId) {
             this.name = name;
             this.port = port;
+            this.enforceHandshake = enforceHandshake;
+            this.selfNodeId = selfNodeId;
         }
     }
 
-    /** POJO: a saved transmitter (name + host + port + stable node_id). */
+    /**
+     * POJO: a saved transmitter (name + host + port + stable node_id, plus
+     * handshake-enforcement flag). See {@link SavedReceiver} for the
+     * back-compat notes on the enforcement field.
+     */
     public static final class SavedTransmitter {
         public String name;
         public String host;
         public int port;
         /** Preserved across runs so receivers see the same SAPIENT node identity. */
         public String nodeId;
+        /** BSI Flex 335 v2.0 handshake enforcement toggle (default false = legacy dumb mode). */
+        public boolean enforceHandshake;
 
         public SavedTransmitter() {}
         public SavedTransmitter(String name, String host, int port, String nodeId) {
+            this(name, host, port, nodeId, false);
+        }
+        public SavedTransmitter(String name, String host, int port, String nodeId, boolean enforceHandshake) {
             this.name = name;
             this.host = host;
             this.port = port;
             this.nodeId = nodeId;
+            this.enforceHandshake = enforceHandshake;
         }
     }
 

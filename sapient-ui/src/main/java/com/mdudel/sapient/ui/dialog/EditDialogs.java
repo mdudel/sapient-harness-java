@@ -6,6 +6,7 @@ package com.mdudel.sapient.ui.dialog;
 
 import javafx.geometry.Insets;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.Spinner;
@@ -38,9 +39,14 @@ public final class EditDialogs {
     public static final class ReceiverEdit {
         public final String name;
         public final int port;
+        public final boolean enforceHandshake;
         public ReceiverEdit(String name, int port) {
+            this(name, port, false);
+        }
+        public ReceiverEdit(String name, int port, boolean enforceHandshake) {
             this.name = name;
             this.port = port;
+            this.enforceHandshake = enforceHandshake;
         }
     }
 
@@ -50,11 +56,16 @@ public final class EditDialogs {
         public final String host;
         public final int port;
         public final String nodeId;
+        public final boolean enforceHandshake;
         public TransmitterEdit(String name, String host, int port, String nodeId) {
+            this(name, host, port, nodeId, false);
+        }
+        public TransmitterEdit(String name, String host, int port, String nodeId, boolean enforceHandshake) {
             this.name = name;
             this.host = host;
             this.port = port;
             this.nodeId = nodeId;
+            this.enforceHandshake = enforceHandshake;
         }
     }
 
@@ -64,7 +75,8 @@ public final class EditDialogs {
      * new values (which may equal the originals if nothing changed).
      */
     public static Optional<ReceiverEdit> editReceiver(
-            String currentName, int currentPort, boolean live) {
+            String currentName, int currentPort,
+            boolean currentEnforce, boolean live) {
 
         Dialog<ReceiverEdit> d = new Dialog<>();
         d.setTitle("Edit receiver — " + currentName);
@@ -79,10 +91,20 @@ public final class EditDialogs {
         Spinner<Integer> portSpinner = new Spinner<>(new SpinnerValueFactory
                 .IntegerSpinnerValueFactory(1, 65535, currentPort));
         portSpinner.setEditable(true);
+        CheckBox enforceBox = new CheckBox("Enforce SAPIENT handshake");
+        enforceBox.setSelected(currentEnforce);
+        Label enforceHelp = new Label("When on, the receiver requires each connecting peer to send "
+                + "Registration first (BSI Flex 335 v2.0 §6.2.2), auto-replies with a valid "
+                + "RegistrationAck, refuses out-of-order traffic, and closes peers that miss "
+                + "3× their declared status_interval (§6.3.2.1).");
+        enforceHelp.setWrapText(true);
+        enforceHelp.getStyleClass().add("text-muted");
 
         GridPane g = Forms.grid();
         Forms.addRow(g, 0, "Name",  nameField);
         Forms.addRow(g, 1, "Port",  portSpinner);
+        Forms.addRow(g, 2, "Mode",  enforceBox);
+        g.add(enforceHelp, 1, 3);
         d.getDialogPane().setContent(g);
 
         d.setResultConverter(bt -> {
@@ -90,7 +112,7 @@ public final class EditDialogs {
             String name = nameField.getText().trim();
             if (name.isEmpty()) return null;   // caller shows a soft error via null == cancel
             int port = portSpinner.getValue() == null ? currentPort : portSpinner.getValue();
-            return new ReceiverEdit(name, port);
+            return new ReceiverEdit(name, port, enforceBox.isSelected());
         });
         return d.showAndWait().map(r -> r);   // preserve empty for cancel
     }
@@ -104,7 +126,7 @@ public final class EditDialogs {
      */
     public static Optional<TransmitterEdit> editTransmitter(
             String currentName, String currentHost, int currentPort,
-            String currentNodeId, boolean live) {
+            String currentNodeId, boolean currentEnforce, boolean live) {
 
         Dialog<TransmitterEdit> d = new Dialog<>();
         d.setTitle("Edit transmitter — " + currentName);
@@ -133,12 +155,25 @@ public final class EditDialogs {
         nodeIdHelp.setWrapText(true);
         nodeIdHelp.getStyleClass().add("text-muted");
 
+        CheckBox enforceBox = new CheckBox("Enforce SAPIENT handshake");
+        enforceBox.setSelected(currentEnforce);
+        Label enforceHelp = new Label("When on, the transmitter drives the full BSI Flex 335 v2.0 "
+                + "handshake on Connect: sends Registration first, waits for RegistrationAck, then "
+                + "emits the initial StatusReport (§6.3.1) and schedules heartbeats at the declared "
+                + "status_interval (§6.3.2). Manual Send is gated by the handshake state — you can't "
+                + "send StatusReport / DetectionReport / etc. until REGISTERED. Reconnects follow the "
+                + "10 s retry / 2 min re-register rule (§4.9). Sends SYSTEM_GOODBYE on Disconnect (§4.8).");
+        enforceHelp.setWrapText(true);
+        enforceHelp.getStyleClass().add("text-muted");
+
         GridPane g = Forms.grid();
         Forms.addRow(g, 0, "Name",     nameField);
         Forms.addRow(g, 1, "Host",     hostField);
         Forms.addRow(g, 2, "Port",     portSpinner);
         Forms.addRow(g, 3, "Node UUID", nodeIdRow);
         g.add(nodeIdHelp, 1, 4);
+        Forms.addRow(g, 5, "Mode", enforceBox);
+        g.add(enforceHelp, 1, 6);
         d.getDialogPane().setContent(g);
 
         d.setResultConverter(bt -> {
@@ -149,7 +184,7 @@ public final class EditDialogs {
             int port = portSpinner.getValue() == null ? currentPort : portSpinner.getValue();
             String nodeId = nodeIdField.getText().trim();
             if (nodeId.isEmpty()) nodeId = UUID.randomUUID().toString();
-            return new TransmitterEdit(name, host, port, nodeId);
+            return new TransmitterEdit(name, host, port, nodeId, enforceBox.isSelected());
         });
         return d.showAndWait().map(r -> r);
     }

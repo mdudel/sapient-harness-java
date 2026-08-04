@@ -12,10 +12,11 @@ import com.mdudel.sapient.ui.persist.SessionStore;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TableCell;
@@ -28,6 +29,8 @@ import javafx.scene.layout.VBox;
 import javafx.util.Callback;
 import org.kordamp.ikonli.feather.Feather;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.SapientMessage;
+
+import java.util.UUID;
 
 import java.net.SocketAddress;
 import java.time.LocalTime;
@@ -90,11 +93,16 @@ public final class ReceiversPane extends BorderPane {
         TableColumn<ReceiverRow, Number> countCol = new TableColumn<>("Received");
         countCol.setCellValueFactory(d -> d.getValue().received);
         countCol.setPrefWidth(100);
+        TableColumn<ReceiverRow, Boolean> enforceCol = new TableColumn<>("Enforce handshake");
+        enforceCol.setCellValueFactory(d -> d.getValue().enforceHandshake);
+        enforceCol.setCellFactory(makeEnforceCellFactory());
+        enforceCol.setPrefWidth(140);
+        enforceCol.setSortable(false);
         TableColumn<ReceiverRow, Void> actionsCol = new TableColumn<>("Actions");
         actionsCol.setCellFactory(makeActionsCellFactory());
         actionsCol.setPrefWidth(170);
         actionsCol.setSortable(false);
-        table.getColumns().addAll(nameCol, portCol, statusCol, countCol, actionsCol);
+        table.getColumns().addAll(nameCol, portCol, statusCol, countCol, enforceCol, actionsCol);
         table.setPrefHeight(220);
 
         VBox top = new VBox(new Label("Configured receivers"), form, table);
@@ -160,7 +168,20 @@ public final class ReceiversPane extends BorderPane {
                 Platform.runLater(() -> append(row, "! ERROR from " + peer + ": " + cause));
             }
         };
-        SapientReceiver rx = new SapientReceiver(row.name.get(), row.port.get(), listener);
+        boolean enforce = row.enforceHandshake.get();
+        SapientReceiver rx;
+        if (enforce) {
+            if (row.selfNodeId == null) row.selfNodeId = UUID.randomUUID().toString();
+            rx = SapientReceiver.builder(row.name.get(), row.port.get())
+                    .listener(listener)
+                    .enforceHandshake(true)
+                    .selfNodeId(row.selfNodeId)
+                    .build();
+            append(row, "★ STRICT mode — fusion nodeId=" + row.selfNodeId
+                    + " (BSI Flex 335 v2.0 handshake enforced)");
+        } else {
+            rx = new SapientReceiver(row.name.get(), row.port.get(), listener);
+        }
         new Thread(() -> {
             try {
                 rx.start();
@@ -199,7 +220,8 @@ public final class ReceiversPane extends BorderPane {
     private void editRow(ReceiverRow row) {
         if (row == null) return;
         boolean wasLive = live.containsKey(row.name.get());
-        var editOpt = EditDialogs.editReceiver(row.name.get(), row.port.get(), wasLive);
+        var editOpt = EditDialogs.editReceiver(row.name.get(), row.port.get(),
+                row.enforceHandshake.get(), wasLive);
         if (editOpt.isEmpty()) return;
         var edit = editOpt.get();
 
@@ -210,8 +232,10 @@ public final class ReceiversPane extends BorderPane {
         // cell listeners so the Name / Port / Status cells repaint.
         row.name.set(edit.name);
         row.port.set(edit.port);
+        row.enforceHandshake.set(edit.enforceHandshake);
         // Status stays whatever stopRow set it to (typically "stopped").
         append(row, "✎ edited — name=" + edit.name + " port=" + edit.port
+                + " enforceHandshake=" + edit.enforceHandshake
                 + (wasLive ? " (was running, now STOPPED — press Start when ready)" : ""));
         persistNow.run();
     }
@@ -353,7 +377,8 @@ public final class ReceiversPane extends BorderPane {
     public List<SessionStore.SavedReceiver> snapshot() {
         List<SessionStore.SavedReceiver> out = new ArrayList<>();
         for (ReceiverRow r : rows) {
-            out.add(new SessionStore.SavedReceiver(r.name.get(), r.port.get()));
+            out.add(new SessionStore.SavedReceiver(r.name.get(), r.port.get(),
+                    r.enforceHandshake.get(), r.selfNodeId));
         }
         return out;
     }
@@ -363,7 +388,10 @@ public final class ReceiversPane extends BorderPane {
         if (saved == null) return;
         for (SessionStore.SavedReceiver s : saved) {
             if (s == null || s.name == null || s.name.isBlank()) continue;
-            rows.add(new ReceiverRow(s.name, s.port));
+            ReceiverRow row = new ReceiverRow(s.name, s.port);
+            row.enforceHandshake.set(s.enforceHandshake);
+            row.selfNodeId = s.selfNodeId;
+            rows.add(row);
         }
     }
 
@@ -375,18 +403,75 @@ public final class ReceiversPane extends BorderPane {
         live.clear();
     }
 
+    /**
+     * Cell factory for the "Enforce handshake" column: a disabled-while-live
+     * checkbox bound to the row's property. Editing while running would be
+     * ambiguous (does it stop + restart? just take effect at next start?),
+     * so we make the semantics unambiguous by requiring the receiver be
+     * stopped first — same UX pattern as the Port field via the edit dialog.
+     * The full-form edit dialog also exposes the checkbox, for consistency.
+     */
+    private Callback<TableColumn<ReceiverRow, Boolean>, TableCell<ReceiverRow, Boolean>>
+            makeEnforceCellFactory() {
+        return col -> new TableCell<>() {
+            private final CheckBox box = new CheckBox();
+            private ReceiverRow boundRow;
+            private final javafx.beans.value.ChangeListener<String> statusListener =
+                    (obs, oldV, newV) -> box.setDisable("running".equals(newV));
+
+            {
+                box.setFocusTraversable(false);
+                box.selectedProperty().addListener((obs, oldV, newV) -> {
+                    if (boundRow == null) return;
+                    if (newV == null || newV == boundRow.enforceHandshake.get()) return;
+                    boundRow.enforceHandshake.set(newV);
+                    append(boundRow, "✎ enforce handshake = " + newV);
+                    persistNow.run();
+                });
+            }
+
+            @Override
+            protected void updateItem(Boolean value, boolean empty) {
+                super.updateItem(value, empty);
+                if (boundRow != null) {
+                    boundRow.status.removeListener(statusListener);
+                    boundRow = null;
+                }
+                if (empty || getIndex() < 0 || getIndex() >= getTableView().getItems().size()) {
+                    setGraphic(null);
+                    return;
+                }
+                ReceiverRow row = getTableView().getItems().get(getIndex());
+                boundRow = row;
+                box.setSelected(row.enforceHandshake.get());
+                box.setDisable("running".equals(row.status.get()));
+                row.status.addListener(statusListener);
+                setGraphic(box);
+            }
+        };
+    }
+
     /** Row model for a configured receiver (name, port, status, received count). */
     static final class ReceiverRow {
         final javafx.beans.property.SimpleStringProperty name;
         final javafx.beans.property.SimpleIntegerProperty port;
         final javafx.beans.property.SimpleStringProperty status;
         final javafx.beans.property.SimpleIntegerProperty received;
+        /** BSI Flex 335 v2.0 handshake-enforcement toggle for this row. */
+        final SimpleBooleanProperty enforceHandshake;
+        /**
+         * Stable UUID used as this fusion node's own {@code node_id} when strict.
+         * Populated lazily on first start when null so legacy dumb-mode rows never
+         * pay for a UUID they don't need.
+         */
+        String selfNodeId;
 
         ReceiverRow(String name, int port) {
             this.name = new javafx.beans.property.SimpleStringProperty(name);
             this.port = new javafx.beans.property.SimpleIntegerProperty(port);
             this.status = new javafx.beans.property.SimpleStringProperty("stopped");
             this.received = new javafx.beans.property.SimpleIntegerProperty(0);
+            this.enforceHandshake = new SimpleBooleanProperty(false);
         }
     }
 }

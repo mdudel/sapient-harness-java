@@ -6,9 +6,13 @@ package com.mdudel.sapient.ui;
 
 import com.mdudel.sapient.core.gen.DetectionGenerator;
 import com.mdudel.sapient.core.gen.SensorGenerator;
+import com.mdudel.sapient.core.protocol.HandshakeState;
+import com.mdudel.sapient.core.protocol.NodeIdentity;
 import com.mdudel.sapient.core.template.MessageTemplateLoader;
+import com.mdudel.sapient.net.SapientEdgeClient;
 import com.mdudel.sapient.net.SapientMessageListener;
 import com.mdudel.sapient.net.SapientTransmitter;
+import uk.gov.dstl.sapientmsg.bsiflex335v2.Registration;
 import com.mdudel.sapient.ui.dialog.EditDialogs;
 import com.mdudel.sapient.ui.dialog.MessageDialogs;
 import com.mdudel.sapient.ui.persist.SessionStore;
@@ -80,7 +84,12 @@ public final class TransmittersPane extends BorderPane {
     }
 
     private final ObservableList<TxRow> rows = FXCollections.observableArrayList();
-    private final Map<String, SapientTransmitter> live = new HashMap<>();
+    /**
+     * Per-row transport handle. Either dumb-mode (bare {@link SapientTransmitter})
+     * or spec-conformant strict-mode ({@link SapientEdgeClient} wrapping one
+     * internally). Selected at connect time by {@link TxRow#enforceHandshake}.
+     */
+    private final Map<String, TxHandle> live = new HashMap<>();
     private final Map<String, DetectionGenerator> generators = new HashMap<>();
     /** Parallel to {@code generators}: one sensor generator per transmitter row. */
     private final Map<String, SensorGenerator> sensorGenerators = new HashMap<>();
@@ -138,12 +147,17 @@ public final class TransmittersPane extends BorderPane {
         activityCol.setCellValueFactory(d -> d.getValue().activity);
         activityCol.setPrefWidth(220);
         activityCol.setCellFactory(makeActivityCellFactory());
+        TableColumn<TxRow, Boolean> enforceCol = new TableColumn<>("Enforce handshake");
+        enforceCol.setCellValueFactory(d -> d.getValue().enforceHandshake);
+        enforceCol.setCellFactory(makeEnforceCellFactory());
+        enforceCol.setPrefWidth(140);
+        enforceCol.setSortable(false);
         TableColumn<TxRow, Void> actionsCol = new TableColumn<>("Actions");
         actionsCol.setCellFactory(makeActionsCellFactory());
         actionsCol.setPrefWidth(170);
         actionsCol.setSortable(false);
         table.getColumns().addAll(nameCol, hostCol, portCol, statusCol, countCol,
-                activityCol, actionsCol);
+                activityCol, enforceCol, actionsCol);
         table.setPrefHeight(200);
 
         VBox top = new VBox(new Label("Configured transmitters"), form, table);
@@ -283,7 +297,7 @@ public final class TransmittersPane extends BorderPane {
     }
 
     private void sendOne(TxRow row, SapientMessage msg) {
-        SapientTransmitter tx = live.get(row.name.get());
+        TxHandle tx = live.get(row.name.get());
         if (tx == null || !tx.isConnected()) {
             append(row, "! not connected — click Connect first");
             return;
@@ -292,6 +306,11 @@ public final class TransmittersPane extends BorderPane {
             tx.send(msg);
             row.sent.set(row.sent.get() + 1);
             append(row, "→ SENT " + msg.getContentCase().name());
+        } catch (IllegalStateException ise) {
+            // Strict-mode handshake gate rejected the send. Give the operator
+            // a plain-English hint instead of the raw exception text.
+            append(row, "! blocked by handshake: " + ise.getMessage()
+                    + " (BSI Flex 335 v2.0 §6.2.2)");
         } catch (Exception ex) {
             append(row, "! send failed: " + ex.getMessage());
         }
@@ -300,7 +319,7 @@ public final class TransmittersPane extends BorderPane {
     // ---------- Detection generator lifecycle ----------
 
     private void startGenerator(TxRow row) {
-        SapientTransmitter tx = live.get(row.name.get());
+        TxHandle tx = live.get(row.name.get());
         if (tx == null || !tx.isConnected()) {
             append(row, "! not connected — click Connect first");
             return;
@@ -374,7 +393,7 @@ public final class TransmittersPane extends BorderPane {
      * has to stop the running one first.
      */
     private void startSensorGenerator(TxRow row) {
-        SapientTransmitter tx = live.get(row.name.get());
+        TxHandle tx = live.get(row.name.get());
         if (tx == null || !tx.isConnected()) {
             append(row, "! not connected — click Connect first");
             return;
@@ -469,16 +488,69 @@ public final class TransmittersPane extends BorderPane {
                 Platform.runLater(() -> append(row, "! ERROR: " + cause));
             }
         };
-        SapientTransmitter tx = new SapientTransmitter(
-                row.name.get(), row.host.get(), row.port.get(), listener);
-        new Thread(() -> {
-            try {
-                tx.connect();
-                live.put(row.name.get(), tx);
-            } catch (Exception ex) {
-                Platform.runLater(() -> row.status.set("error: " + ex.getMessage()));
-            }
-        }, "connect-" + row.name.get()).start();
+        boolean enforce = row.enforceHandshake.get();
+        if (enforce) {
+            // Strict mode: the SapientEdgeClient drives the whole handshake
+            // (Registration → wait for RegistrationAck → initial StatusReport
+            //  → heartbeats at declared interval → GOODBYE on close), and gates
+            // subsequent user-triggered sends via HandshakeState.canSend().
+            NodeIdentity id = new NodeIdentity(row.nodeId,
+                    Registration.NodeType.NODE_TYPE_OTHER,
+                    NodeIdentity.ICD_VERSION,
+                    NodeIdentity.DEFAULT_STATUS_INTERVAL);
+            SapientEdgeClient.Listener edgeListener = new SapientEdgeClient.Listener() {
+                @Override public void onStateChanged(HandshakeState newState) {
+                    Platform.runLater(() -> {
+                        String label = switch (newState) {
+                            case NEW         -> "connecting";
+                            case REGISTERING -> "registering";
+                            case REGISTERED  -> "connected";  // matches dumb-mode label so status colouring holds
+                            case REJECTED    -> "error: registration rejected";
+                            case GOODBYE     -> "disconnecting";
+                            case CLOSED      -> "disconnected";
+                        };
+                        row.status.set(label);
+                        append(row, "◎ handshake state = " + newState);
+                    });
+                }
+                @Override public void onMessage(SocketAddress peer, SapientMessage msg) {
+                    Platform.runLater(() -> append(row,
+                            "← REPLY " + msg.getContentCase().name() + " from " + msg.getNodeId()));
+                }
+                @Override public void onError(SocketAddress peer, Throwable cause) {
+                    Platform.runLater(() -> append(row, "! ERROR: " + cause));
+                }
+            };
+            SapientEdgeClient client = SapientEdgeClient.builder(row.host.get(), row.port.get(), id)
+                    .name(row.name.get())
+                    .listener(edgeListener)
+                    .build();
+            new Thread(() -> {
+                try {
+                    client.start();
+                    live.put(row.name.get(), TxHandle.strict(client));
+                    Platform.runLater(() -> append(row,
+                            "★ STRICT mode — Registration sent as nodeId=" + row.nodeId));
+                } catch (Exception ex) {
+                    Platform.runLater(() -> {
+                        row.status.set("error: " + ex.getMessage());
+                        append(row, "! handshake failed: " + ex.getMessage());
+                    });
+                    try { client.close(); } catch (Exception ignore) { }
+                }
+            }, "connect-strict-" + row.name.get()).start();
+        } else {
+            SapientTransmitter tx = new SapientTransmitter(
+                    row.name.get(), row.host.get(), row.port.get(), listener);
+            new Thread(() -> {
+                try {
+                    tx.connect();
+                    live.put(row.name.get(), TxHandle.dumb(tx));
+                } catch (Exception ex) {
+                    Platform.runLater(() -> row.status.set("error: " + ex.getMessage()));
+                }
+            }, "connect-" + row.name.get()).start();
+        }
     }
 
     private void disconnect(TxRow row) {
@@ -487,7 +559,7 @@ public final class TransmittersPane extends BorderPane {
         // socket. Extended 2026-08-01 when sensor generator landed.
         stopGenerator(row);
         stopSensorGenerator(row);
-        SapientTransmitter tx = live.remove(row.name.get());
+        TxHandle tx = live.remove(row.name.get());
         if (tx != null) new Thread(tx::close, "disconnect-" + row.name.get()).start();
     }
 
@@ -514,7 +586,8 @@ public final class TransmittersPane extends BorderPane {
         if (row == null) return;
         boolean wasLive = live.containsKey(row.name.get());
         var editOpt = EditDialogs.editTransmitter(
-                row.name.get(), row.host.get(), row.port.get(), row.nodeId, wasLive);
+                row.name.get(), row.host.get(), row.port.get(), row.nodeId,
+                row.enforceHandshake.get(), wasLive);
         if (editOpt.isEmpty()) return;
         var edit = editOpt.get();
 
@@ -529,6 +602,7 @@ public final class TransmittersPane extends BorderPane {
         int idx = rows.indexOf(row);
         TxRow replacement = new TxRow(edit.name, edit.host, edit.port, edit.nodeId);
         replacement.status.set("disconnected");
+        replacement.enforceHandshake.set(edit.enforceHandshake);
         if (idx >= 0) {
             rows.set(idx, replacement);
         } else {
@@ -536,6 +610,7 @@ public final class TransmittersPane extends BorderPane {
         }
         append(replacement, "✎ edited — name=" + edit.name + " host=" + edit.host
                 + " port=" + edit.port + " nodeId=" + edit.nodeId
+                + " enforceHandshake=" + edit.enforceHandshake
                 + (wasLive ? " (was connected, now DISCONNECTED — press Connect when ready)" : ""));
         persistNow.run();
     }
@@ -660,11 +735,72 @@ public final class TransmittersPane extends BorderPane {
                     return;
                 }
                 setText(status);
+                // Strict-mode adds transitional labels ("connecting",
+                // "registering", "disconnecting") that are neither fully
+                // connected nor error-red. Colour them amber via the
+                // AtlantaFX 'warning' semantic variable so the operator
+                // can see the handshake in flight.
                 if ("connected".equals(status)) {
                     setStyle("-fx-text-fill: -color-success-fg; -fx-font-weight: bold;");
+                } else if ("connecting".equals(status) || "registering".equals(status)
+                        || "disconnecting".equals(status)) {
+                    setStyle("-fx-text-fill: -color-warning-fg; -fx-font-weight: bold;");
                 } else {
                     setStyle("-fx-text-fill: -color-danger-fg; -fx-font-weight: bold;");
                 }
+            }
+        };
+    }
+
+    /**
+     * Cell factory for the "Enforce handshake" column: a checkbox bound to
+     * the row's {@link TxRow#enforceHandshake} property. Disabled while the
+     * transmitter is connected — same UX pattern as the Port / Host fields
+     * (edit dialog required to change while live).
+     */
+    private Callback<TableColumn<TxRow, Boolean>, TableCell<TxRow, Boolean>>
+            makeEnforceCellFactory() {
+        return col -> new TableCell<>() {
+            private final javafx.scene.control.CheckBox box = new javafx.scene.control.CheckBox();
+            private TxRow boundRow;
+            private final javafx.beans.value.ChangeListener<String> statusListener =
+                    (obs, oldV, newV) -> box.setDisable(isConnectedStatus(newV));
+
+            {
+                box.setFocusTraversable(false);
+                box.selectedProperty().addListener((obs, oldV, newV) -> {
+                    if (boundRow == null) return;
+                    if (newV == null || newV == boundRow.enforceHandshake.get()) return;
+                    boundRow.enforceHandshake.set(newV);
+                    append(boundRow, "✎ enforce handshake = " + newV);
+                    persistNow.run();
+                });
+            }
+
+            private boolean isConnectedStatus(String s) {
+                // Any non-"disconnected" state where the transmitter is holding
+                // a live handle should freeze the checkbox.
+                return "connected".equals(s) || "registering".equals(s)
+                        || "connecting".equals(s) || "disconnecting".equals(s);
+            }
+
+            @Override
+            protected void updateItem(Boolean value, boolean empty) {
+                super.updateItem(value, empty);
+                if (boundRow != null) {
+                    boundRow.status.removeListener(statusListener);
+                    boundRow = null;
+                }
+                if (empty || getIndex() < 0 || getIndex() >= getTableView().getItems().size()) {
+                    setGraphic(null);
+                    return;
+                }
+                TxRow row = getTableView().getItems().get(getIndex());
+                boundRow = row;
+                box.setSelected(row.enforceHandshake.get());
+                box.setDisable(isConnectedStatus(row.status.get()));
+                row.status.addListener(statusListener);
+                setGraphic(box);
             }
         };
     }
@@ -725,7 +861,8 @@ public final class TransmittersPane extends BorderPane {
         List<SessionStore.SavedTransmitter> out = new ArrayList<>();
         for (TxRow r : rows) {
             out.add(new SessionStore.SavedTransmitter(
-                    r.name.get(), r.host.get(), r.port.get(), r.nodeId));
+                    r.name.get(), r.host.get(), r.port.get(), r.nodeId,
+                    r.enforceHandshake.get()));
         }
         return out;
     }
@@ -735,7 +872,9 @@ public final class TransmittersPane extends BorderPane {
         if (saved == null) return;
         for (SessionStore.SavedTransmitter s : saved) {
             if (s == null || s.name == null || s.name.isBlank()) continue;
-            rows.add(new TxRow(s.name, s.host, s.port, s.nodeId));
+            TxRow row = new TxRow(s.name, s.host, s.port, s.nodeId);
+            row.enforceHandshake.set(s.enforceHandshake);
+            rows.add(row);
         }
     }
 
@@ -749,7 +888,7 @@ public final class TransmittersPane extends BorderPane {
             try { sg.stop(); } catch (Exception ignored) { }
         }
         sensorGenerators.clear();
-        for (SapientTransmitter tx : live.values()) {
+        for (TxHandle tx : live.values()) {
             try { tx.close(); } catch (Exception ignored) { }
         }
         live.clear();
@@ -767,6 +906,8 @@ public final class TransmittersPane extends BorderPane {
         final SimpleBooleanProperty generating;
         /** Stable node UUID per transmitter row (used as SAPIENT node_id). */
         final String nodeId;
+        /** BSI Flex 335 v2.0 handshake-enforcement toggle for this row. */
+        final SimpleBooleanProperty enforceHandshake;
 
         TxRow(String name, String host, int port) {
             this(name, host, port, UUID.randomUUID().toString());
@@ -784,6 +925,47 @@ public final class TransmittersPane extends BorderPane {
             this.nodeId = (nodeId == null || nodeId.isBlank())
                     ? UUID.randomUUID().toString()
                     : nodeId;
+            this.enforceHandshake = new SimpleBooleanProperty(false);
+        }
+    }
+
+    /**
+     * Per-row transport handle. Wraps either a {@link SapientTransmitter}
+     * (dumb mode) or a {@link SapientEdgeClient} (strict mode) behind a
+     * uniform {@link #send} / {@link #isConnected} / {@link #close} facade
+     * so the generator + Send-button paths don't have to branch on mode.
+     *
+     * <p>Strict-mode {@link #send} may throw {@link IllegalStateException}
+     * when the current {@link HandshakeState} does not permit the content
+     * type — callers surface that to the user via the message stream.
+     */
+    static final class TxHandle {
+        private final SapientTransmitter dumb;
+        private final SapientEdgeClient strict;
+
+        private TxHandle(SapientTransmitter dumb, SapientEdgeClient strict) {
+            this.dumb = dumb;
+            this.strict = strict;
+        }
+
+        static TxHandle dumb(SapientTransmitter tx) { return new TxHandle(tx, null); }
+        static TxHandle strict(SapientEdgeClient client) { return new TxHandle(null, client); }
+
+        boolean isStrict() { return strict != null; }
+
+        boolean isConnected() {
+            if (strict != null) return strict.isRegistered();
+            return dumb != null && dumb.isConnected();
+        }
+
+        void send(SapientMessage msg) {
+            if (strict != null) strict.send(msg);
+            else dumb.send(msg);
+        }
+
+        void close() {
+            if (strict != null) strict.close();
+            else if (dumb != null) dumb.close();
         }
     }
 
