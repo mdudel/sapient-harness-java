@@ -84,14 +84,32 @@ class AutoStartTest {
 
     @Test
     void autoStartOptionAppearsInDropdown() throws Exception {
+        // Post-2026-08-05 card refactor: the Message picker is now per-row,
+        // so a fresh pane has ZERO ChoiceBoxes. Add a row first, then look
+        // for the picker inside the freshly-built TxCard.
         AtomicReference<TransmittersPane> paneRef = new AtomicReference<>();
         runFx(() -> paneRef.set(new TransmittersPane()));
         TransmittersPane pane = paneRef.get();
 
+        // Fill in the Add form (Name / Host / Port) and fire '+'.
+        List<TextField> fields = new ArrayList<>();
+        List<Button> buttons = new ArrayList<>();
+        collect(pane, TextField.class, fields);
+        collect(pane, Button.class, buttons);
+        runFx(() -> {
+            fields.get(0).setText("tx-dropdown");
+            fields.get(1).setText("127.0.0.1");
+            fields.get(2).setText("14098");
+            buttons.get(0).fire();
+        });
+
+        // Card sits inside pane.cardsBox (which sits inside a ScrollPane
+        // whose skin isn't instantiated without a Stage — that's why we
+        // walk cardsBox directly rather than the whole pane tree).
         @SuppressWarnings("rawtypes")
         List<ChoiceBox> choices = new ArrayList<>();
-        collect(pane, ChoiceBox.class, choices);
-        assertThat(choices).as("expected the message-type picker ChoiceBox").isNotEmpty();
+        collect(pane.cardsBox, ChoiceBox.class, choices);
+        assertThat(choices).as("expected a per-row message-type picker after Add").isNotEmpty();
 
         // The picker's items are the MsgType enum; enum's toString() returns the label.
         List<Object> items = new ArrayList<>(choices.get(0).getItems());
@@ -102,41 +120,44 @@ class AutoStartTest {
 
     @Test
     void autoStartOnNonStrictRowShowsHint() throws Exception {
-        // Add a transmitter row via the '+' handler, pick AUTO_START,
-        // click Send, and verify the stream carries the strict-mode hint.
+        // Add a transmitter row via the '+' handler, pick AUTO_START on the
+        // row's picker, click the row's Send, and verify the stream carries
+        // the strict-mode hint. Post-2026-08-05: picker + Send are per-row,
+        // so recollect ChoiceBoxes + Buttons AFTER the add.
         AtomicReference<TransmittersPane> paneRef = new AtomicReference<>();
         runFx(() -> paneRef.set(new TransmittersPane()));
         TransmittersPane pane = paneRef.get();
 
         List<TextField> fields = new ArrayList<>();
-        List<Button> buttons = new ArrayList<>();
-        @SuppressWarnings("rawtypes")
-        List<ChoiceBox> choices = new ArrayList<>();
+        List<Button> buttonsBefore = new ArrayList<>();
         collect(pane, TextField.class, fields);
-        collect(pane, Button.class, buttons);
-        collect(pane, ChoiceBox.class, choices);
+        collect(pane, Button.class, buttonsBefore);
         assertThat(fields).hasSizeGreaterThanOrEqualTo(3);
-        assertThat(buttons).isNotEmpty();
+        assertThat(buttonsBefore).isNotEmpty();
 
-        // Fill in name/host/port, click Add.
+        // Fill in name/host/port, click Add. buttonsBefore.get(0) == '+' Add.
         runFx(() -> {
             fields.get(0).setText("tx-nonstrict");
             fields.get(1).setText("127.0.0.1");
             fields.get(2).setText("14099");
-            buttons.get(0).fire(); // '+' Add
+            buttonsBefore.get(0).fire();
         });
         assertThat(pane.snapshot()).hasSize(1);
-        // enforceHandshake is a boolean field on SavedTransmitter (public);
-        // assert directly on the snapshot value.
         assertThat(pane.snapshot().get(0).enforceHandshake)
                 .as("row must default to strict-mode OFF").isFalse();
 
-        // Set the picker to AUTO_START and fire Send.
-        // The ChoiceBox at index 0 is the msg-type picker (per constructor
-        // order). Its items are the MsgType enum; find and set AUTO_START.
+        // Recollect from cardsBox directly (see companion test comment on
+        // why we don't walk the whole pane tree here).
+        @SuppressWarnings("rawtypes")
+        List<ChoiceBox> choicesAfter = new ArrayList<>();
+        List<Button> buttonsAfter = new ArrayList<>();
+        collect(pane.cardsBox, ChoiceBox.class, choicesAfter);
+        collect(pane.cardsBox, Button.class, buttonsAfter);
+        assertThat(choicesAfter).as("expected a per-row picker after Add").isNotEmpty();
+
         runFx(() -> {
             @SuppressWarnings("unchecked")
-            ChoiceBox<Object> picker = (ChoiceBox<Object>) choices.get(0);
+            ChoiceBox<Object> picker = (ChoiceBox<Object>) choicesAfter.get(0);
             for (Object o : picker.getItems()) {
                 if (o.toString().contains("Auto-Start")) {
                     picker.setValue(o);
@@ -144,16 +165,17 @@ class AutoStartTest {
                 }
             }
         });
-        // The Send button is one of the pane's Buttons — the one whose
-        // accessible text mentions "send" (case-insensitive). Find it.
+
+        // The per-row Send button carries accessibleText "Send selected
+        // message" (see Icons.accentIconButton in TxCard).
         Button sendBtn = null;
-        for (Button b : buttons) {
+        for (Button b : buttonsAfter) {
             String tip = b.getAccessibleText();
             if (tip != null && tip.toLowerCase().contains("send")) {
                 sendBtn = b; break;
             }
         }
-        assertThat(sendBtn).as("expected a Send button with a matching tooltip").isNotNull();
+        assertThat(sendBtn).as("expected a per-row Send button with a matching tooltip").isNotNull();
         final Button send = sendBtn;
         runFx(send::fire);
 
