@@ -139,11 +139,40 @@ public final class ReceiversPane extends BorderPane {
         VBox top = new VBox(new Label("Configured receivers"), form, formHint, table);
 
         // --- Bottom: message stream ---
+        //
+        // Header row: "Message stream" label + Clear button. Sibling parity
+        // with TransmittersPane (2026-08-05, Marty's ask). Clear wipes the
+        // observable list backing the ListView; the 500-line cap in
+        // appendStream(...) still applies to new messages.
         ListView<String> streamView = new ListView<>(stream);
         streamView.setPrefHeight(320);
+        // Tighten row height + kill AtlantaFX's default vertical cell
+        // padding so log lines aren't spaced out. Inline stylesheet ->
+        // scoped to THIS ListView only. See TransmittersPane for the
+        // rationale (Marty 2026-08-05 whitespace complaint).
+        streamView.setStyle(
+                "-fx-cell-size: 20px;");
+        streamView.getStylesheets().add(
+                "data:text/css," + java.net.URLEncoder.encode(
+                        ".list-cell { -fx-padding: 1 6 1 6; }",
+                        java.nio.charset.StandardCharsets.UTF_8));
+        Button clearStreamBtn = Icons.dangerIconButton(Feather.TRASH_2,
+                "Clear the message stream");
+        clearStreamBtn.setFocusTraversable(false);
+        clearStreamBtn.setOnAction(e -> stream.clear());
+        HBox streamHeader = new HBox(8,
+                new Label("Message stream"),
+                new javafx.scene.layout.Region() {{
+                    javafx.scene.layout.HBox.setHgrow(this, javafx.scene.layout.Priority.ALWAYS);
+                }},
+                clearStreamBtn);
+        streamHeader.setAlignment(Pos.CENTER_LEFT);
+        streamHeader.setPadding(new Insets(4, 4, 4, 4));
+        VBox streamBox = new VBox(streamHeader, streamView);
+        VBox.setVgrow(streamView, javafx.scene.layout.Priority.ALWAYS);
 
         setTop(top);
-        setCenter(streamView);
+        setCenter(streamBox);
 
         // --- Wire up buttons ---
         addBtn.setOnAction(e -> {

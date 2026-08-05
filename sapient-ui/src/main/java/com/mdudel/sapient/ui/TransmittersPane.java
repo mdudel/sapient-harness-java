@@ -223,12 +223,46 @@ public final class TransmittersPane extends BorderPane {
         VBox middle = new VBox(sendRow, helpText);
 
         // --- Bottom: event stream ---
+        //
+        // Header row: "Event stream" label + Clear button.
+        // Clear wipes the observable list backing the ListView so the pane
+        // starts fresh; the 500-line cap in append(...) still applies to new
+        // messages. AutoStartTest relies on this ListView being the LAST one
+        // added to the pane tree (see collect(...ListView.class...) picking
+        // lists.get(lists.size() - 1)) so the header row deliberately uses
+        // a HBox with Label + Button and no ListView instances.
         ListView<String> streamView = new ListView<>(stream);
         streamView.setPrefHeight(200);
+        // Tighten row height + kill AtlantaFX's default vertical cell
+        // padding. Marty 2026-08-05: log entries had too much whitespace
+        // between lines. Inline stylesheet -> scoped to this ListView only
+        // so we don't affect the transmitter TableView above or any other
+        // list-cell in the app. -fx-cell-size shrinks the fixed row height,
+        // -fx-padding on .list-cell removes the intra-cell top/bottom pad.
+        streamView.setStyle(
+                "-fx-cell-size: 20px;");
+        streamView.getStylesheets().add(
+                "data:text/css," + java.net.URLEncoder.encode(
+                        ".list-cell { -fx-padding: 1 6 1 6; }",
+                        java.nio.charset.StandardCharsets.UTF_8));
+        Button clearStreamBtn = Icons.dangerIconButton(Feather.TRASH_2,
+                "Clear the event stream");
+        clearStreamBtn.setFocusTraversable(false);
+        clearStreamBtn.setOnAction(e -> stream.clear());
+        HBox streamHeader = new HBox(8,
+                new Label("Event stream"),
+                new javafx.scene.layout.Region() {{
+                    javafx.scene.layout.HBox.setHgrow(this, javafx.scene.layout.Priority.ALWAYS);
+                }},
+                clearStreamBtn);
+        streamHeader.setAlignment(Pos.CENTER_LEFT);
+        streamHeader.setPadding(new Insets(4, 4, 4, 4));
+        VBox streamBox = new VBox(streamHeader, streamView);
+        VBox.setVgrow(streamView, javafx.scene.layout.Priority.ALWAYS);
 
         setTop(top);
         setCenter(middle);
-        setBottom(streamView);
+        setBottom(streamBox);
 
         // --- Wire up: Add / Connect / Disconnect / Remove ---
         addBtn.setOnAction(e -> {
