@@ -666,7 +666,19 @@ public class TransmittersPane extends BorderPane {
         stopGenerator(row);
         stopSensorGenerator(row);
         TxHandle tx = live.remove(row.name.get());
-        if (tx != null) new Thread(tx::close, "disconnect-" + row.name.get()).start();
+        // Flip the visible state IMMEDIATELY so the connect button repaints
+        // red without waiting for the async socket-close callback
+        // (2026-08-05 18:06 UTC — Marty's Auto-Start + strict-mode row
+        // showed "Disconnect clicked" + generators stopped in the stream
+        // but the play button stayed green because SapientEdgeClient.close()
+        // was not reliably firing onStateChanged(CLOSED) after Auto-Start).
+        // Any late callback that ALSO sets "disconnected" is a harmless
+        // no-op because the property equality check dedups.
+        if (tx != null) {
+            row.status.set("disconnected");
+            append(row, "→ DISCONNECTED (local close)");
+            new Thread(tx::close, "disconnect-" + row.name.get()).start();
+        }
     }
 
     public void setPersistNow(Runnable persistNow) {
