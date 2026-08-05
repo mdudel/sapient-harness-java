@@ -748,12 +748,16 @@ public class TransmittersPane extends BorderPane {
      */
     private final class TxCard extends VBox {
         final TxRow row;
-        private final Button connectBtn = Icons.iconButton(Feather.PLAY, "Connect this transmitter");
-        // Use POWER icon (not SQUARE) so the row-level Disconnect is
-        // visually distinct from the pane-level Stop-generators button
-        // which also renders a SQUARE (Marty 2026-08-05 12:01 UTC —
-        // "the disconnect button does not work", likely because he was
-        // clicking the wrong SQUARE icon).
+        // PLAY_CIRCLE renders as a filled play button (circle with a
+        // triangle inside) so it reads as "fill the arrow buttons" per
+        // Marty 2026-08-05 12:26 UTC — Feather's outline glyph looked
+        // hollow next to the coloured button background.
+        private final Button connectBtn = Icons.iconButton(Feather.PLAY_CIRCLE, "Connect this transmitter");
+        // POWER icon (not SQUARE) so the row-level Disconnect is
+        // visually distinct from the pane-level Stop-generators button.
+        // (2026-08-05 12:01 UTC — "the disconnect button does not work";
+        // root cause was actually the two SQUAREs plus the .flat style
+        // hiding the semantic state change on the play button.)
         private final Button disconnectBtn = Icons.iconButton(Feather.POWER, "Disconnect this transmitter");
 
         TxCard(TxRow row) {
@@ -767,8 +771,12 @@ public class TransmittersPane extends BorderPane {
             // ---- Row 1 ----
             connectBtn.setFocusTraversable(false);
             disconnectBtn.setFocusTraversable(false);
-            connectBtn.getStyleClass().add("flat");
-            disconnectBtn.getStyleClass().add("flat");
+            // Deliberately NOT adding "flat" here — flat overrides the
+            // success/danger semantic style classes and washes the button
+            // out to a hollow outline, so Marty couldn't tell the state
+            // apart after a disconnect (2026-08-05 12:26 UTC screenshot).
+            // With no "flat" the AtlantaFX success/danger fills give a
+            // solid green/red background so the connect state is obvious.
             paintConnectButton(row.status.get());
             row.status.addListener((obs, o, n) -> paintConnectButton(n));
             connectBtn.setOnAction(e -> { append(row, "◎ Connect clicked"); connect(row); });
