@@ -171,7 +171,11 @@ public class TransmittersPane extends BorderPane {
         HBox headerRow = buildHeaderRow();
 
         // ---- Pane-level "Stop generators on selected transmitter" ----
-        Button stopGenBtn = Icons.dangerIconButton(Feather.SQUARE,
+        // Use OCTAGON (stop-sign shape) not SQUARE so this pane-level
+        // Stop-generators button doesn't visually collide with the row-
+        // level Disconnect button. Same reasoning as the disconnect-icon
+        // change (Marty 2026-08-05 12:01 UTC).
+        Button stopGenBtn = Icons.dangerIconButton(Feather.OCTAGON,
                 "Stop generators on the selected transmitter");
         stopGenBtn.setOnAction(e -> {
             TxRow row = selectedRow.get();
@@ -745,7 +749,12 @@ public class TransmittersPane extends BorderPane {
     private final class TxCard extends VBox {
         final TxRow row;
         private final Button connectBtn = Icons.iconButton(Feather.PLAY, "Connect this transmitter");
-        private final Button disconnectBtn = Icons.iconButton(Feather.SQUARE, "Disconnect this transmitter");
+        // Use POWER icon (not SQUARE) so the row-level Disconnect is
+        // visually distinct from the pane-level Stop-generators button
+        // which also renders a SQUARE (Marty 2026-08-05 12:01 UTC —
+        // "the disconnect button does not work", likely because he was
+        // clicking the wrong SQUARE icon).
+        private final Button disconnectBtn = Icons.iconButton(Feather.POWER, "Disconnect this transmitter");
 
         TxCard(TxRow row) {
             super(2);
@@ -762,8 +771,10 @@ public class TransmittersPane extends BorderPane {
             disconnectBtn.getStyleClass().add("flat");
             paintConnectButton(row.status.get());
             row.status.addListener((obs, o, n) -> paintConnectButton(n));
-            connectBtn.setOnAction(e -> connect(row));
-            disconnectBtn.setOnAction(e -> disconnect(row));
+            connectBtn.setOnAction(e -> { append(row, "◎ Connect clicked"); connect(row); });
+            // Log the click into the event stream so it's obvious the click
+            // reached the handler even if the underlying transport is stuck.
+            disconnectBtn.setOnAction(e -> { append(row, "◎ Disconnect clicked"); disconnect(row); });
             HBox actionsBox = new HBox(4, connectBtn, disconnectBtn);
             actionsBox.setAlignment(Pos.CENTER_LEFT);
             setFixedWidth(actionsBox, W_ACTIONS);
