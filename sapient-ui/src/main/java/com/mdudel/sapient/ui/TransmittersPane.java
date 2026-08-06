@@ -14,6 +14,8 @@ import com.mdudel.sapient.net.SapientMessageListener;
 import com.mdudel.sapient.net.SapientTransmitter;
 import com.mdudel.sapient.ui.dialog.EditDialogs;
 import com.mdudel.sapient.ui.dialog.MessageDialogs;
+import com.mdudel.sapient.ui.persist.SavedDetectionConfig;
+import com.mdudel.sapient.ui.persist.SavedSensorConfig;
 import com.mdudel.sapient.ui.persist.SessionStore;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -408,8 +410,12 @@ public class TransmittersPane extends BorderPane {
             return;
         }
         // Sensor first (sends StatusReport with the sensor's own location).
+        // Prefer the row's persisted config; fall back to hard-coded defaults.
+        // This is the fix for Marty 2026-08-06 09:59 UTC: Auto-Start now
+        // picks up any per-tx sensor location / FOV / motion tweak the
+        // operator saved via the Start Sensor Generator dialog.
         try {
-            SensorGenerator.Config sensorCfg = AutoStartRecipe.sensorConfig(row.nodeId);
+            SensorGenerator.Config sensorCfg = AutoStartRecipe.sensorConfig(row);
             SensorGenerator sensor = new SensorGenerator(sensorCfg, msg -> {
                 try {
                     tx.send(msg);
@@ -430,9 +436,10 @@ public class TransmittersPane extends BorderPane {
             append(row, "! auto-start: sensor generator failed to start: " + ex.getMessage());
             return;
         }
-        // Detection generator.
+        // Detection generator (also prefers row's persisted config; see
+        // sensor comment above for the fix context).
         try {
-            DetectionGenerator.Config detCfg = AutoStartRecipe.detectionConfig(row.nodeId);
+            DetectionGenerator.Config detCfg = AutoStartRecipe.detectionConfig(row);
             DetectionGenerator gen = new DetectionGenerator(detCfg, msg -> {
                 try {
                     tx.send(msg);
@@ -502,9 +509,17 @@ public class TransmittersPane extends BorderPane {
         TxHandle tx = live.get(row.name.get());
         if (tx == null || !tx.isConnected()) { append(row, "! not connected — click Connect first"); return; }
         if (generators.containsKey(row.name.get())) { append(row, "! generator already running — stop it first"); return; }
-        Optional<DetectionGenerator.Config> cfgOpt = MessageDialogs.detectionGenerator(row.nodeId);
+        // Seed the dialog with the operator's last-saved values for this
+        // transmitter (null == "never customised, use built-in defaults").
+        // Any edit sticks: on OK we stash the fresh config back onto the row
+        // and persist to session.json so the next run (incl. Auto-Start)
+        // sees the same values.
+        Optional<DetectionGenerator.Config> cfgOpt =
+                MessageDialogs.detectionGenerator(row.nodeId, row.lastDetectionCfg);
         if (cfgOpt.isEmpty()) return;
         DetectionGenerator.Config cfg = cfgOpt.get();
+        row.lastDetectionCfg = SavedDetectionConfig.fromConfig(cfg);
+        persistNow.run();
 
         DetectionGenerator gen = new DetectionGenerator(cfg, msg -> {
             try {
@@ -547,9 +562,13 @@ public class TransmittersPane extends BorderPane {
         TxHandle tx = live.get(row.name.get());
         if (tx == null || !tx.isConnected()) { append(row, "! not connected — click Connect first"); return; }
         if (sensorGenerators.containsKey(row.name.get())) { append(row, "! sensor generator already running"); return; }
-        Optional<SensorGenerator.Config> cfgOpt = MessageDialogs.sensorGenerator(row.nodeId);
+        // See startGenerator for the seed-then-stash-then-persist contract.
+        Optional<SensorGenerator.Config> cfgOpt =
+                MessageDialogs.sensorGenerator(row.nodeId, row.lastSensorCfg);
         if (cfgOpt.isEmpty()) return;
         SensorGenerator.Config cfg = cfgOpt.get();
+        row.lastSensorCfg = SavedSensorConfig.fromConfig(cfg);
+        persistNow.run();
         SensorGenerator sensor = new SensorGenerator(cfg, msg -> {
             try {
                 tx.send(msg);
@@ -689,9 +708,10 @@ public class TransmittersPane extends BorderPane {
     private void editRow(TxRow row) {
         if (row == null) return;
         boolean wasLive = live.containsKey(row.name.get());
+        boolean hasSavedCfgs = row.lastSensorCfg != null || row.lastDetectionCfg != null;
         var editOpt = EditDialogs.editTransmitter(
                 row.name.get(), row.host.get(), row.port.get(), row.nodeId,
-                row.enforceHandshake.get(), wasLive);
+                row.enforceHandshake.get(), wasLive, hasSavedCfgs);
         if (editOpt.isEmpty()) return;
         var edit = editOpt.get();
         stopGenerator(row);
@@ -701,11 +721,20 @@ public class TransmittersPane extends BorderPane {
         TxRow replacement = new TxRow(edit.name, edit.host, edit.port, edit.nodeId);
         replacement.status.set("disconnected");
         replacement.enforceHandshake.set(edit.enforceHandshake);
+        // Preserve the operator's per-tx generator configs across the Edit
+        // swap unless they explicitly ticked Reset in the dialog. Without
+        // this, editing (say) the port would wipe the persisted sensor
+        // location — exactly the bug we're closing.
+        if (!edit.resetGeneratorConfigs) {
+            replacement.lastSensorCfg    = row.lastSensorCfg;
+            replacement.lastDetectionCfg = row.lastDetectionCfg;
+        }
         if (idx >= 0) rows.set(idx, replacement); else rows.add(replacement);
         if (wasSelected) selectedRow.set(replacement);
         append(replacement, "✎ edited — name=" + edit.name + " host=" + edit.host
                 + " port=" + edit.port + " nodeId=" + edit.nodeId
                 + " enforceHandshake=" + edit.enforceHandshake
+                + (edit.resetGeneratorConfigs ? " (sensor + detection configs RESET to defaults)" : "")
                 + (wasLive ? " (was connected, now DISCONNECTED — press Connect when ready)" : ""));
         persistNow.run();
     }
@@ -726,7 +755,9 @@ public class TransmittersPane extends BorderPane {
         for (TxRow r : rows) {
             out.add(new SessionStore.SavedTransmitter(
                     r.name.get(), r.host.get(), r.port.get(), r.nodeId,
-                    r.enforceHandshake.get()));
+                    r.enforceHandshake.get(),
+                    r.lastSensorCfg,
+                    r.lastDetectionCfg));
         }
         return out;
     }
@@ -737,6 +768,8 @@ public class TransmittersPane extends BorderPane {
             if (s == null || s.name == null || s.name.isBlank()) continue;
             TxRow row = new TxRow(s.name, s.host, s.port, s.nodeId);
             row.enforceHandshake.set(s.enforceHandshake);
+            row.lastSensorCfg = s.sensorConfig;
+            row.lastDetectionCfg = s.detectionConfig;
             rows.add(row);
         }
     }
@@ -956,6 +989,18 @@ public class TransmittersPane extends BorderPane {
         final SimpleBooleanProperty generating;
         final String nodeId;
         final SimpleBooleanProperty enforceHandshake;
+
+        /**
+         * Per-transmitter persisted sensor-generator config. {@code null}
+         * means "never customised — use AutoStartRecipe / MessageDialogs
+         * defaults". Populated when the operator clicks OK in the Start
+         * Sensor Generator dialog; consumed by Auto-Start and by the sensor
+         * dialog on next open (so an edit sticks across runs). See
+         * SessionStore.SavedTransmitter for the on-disk shape.
+         */
+        SavedSensorConfig lastSensorCfg;
+        /** Per-transmitter persisted detection-generator config. See {@link #lastSensorCfg}. */
+        SavedDetectionConfig lastDetectionCfg;
 
         TxRow(String name, String host, int port) { this(name, host, port, UUID.randomUUID().toString()); }
         TxRow(String name, String host, int port, String nodeId) {

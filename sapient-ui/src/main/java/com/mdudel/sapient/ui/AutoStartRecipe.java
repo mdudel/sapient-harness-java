@@ -7,6 +7,8 @@ package com.mdudel.sapient.ui;
 import com.mdudel.sapient.core.gen.DetectionGenerator;
 import com.mdudel.sapient.core.gen.SensorGenerator;
 import com.mdudel.sapient.ui.dialog.MessageDialogs;
+import com.mdudel.sapient.ui.persist.SavedDetectionConfig;
+import com.mdudel.sapient.ui.persist.SavedSensorConfig;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.StatusReport;
 
 /**
@@ -34,9 +36,33 @@ public final class AutoStartRecipe {
     }
 
     /**
-     * Build a {@link SensorGenerator.Config} suitable for the auto-start
-     * cascade. Mirrors the sensor generator dialog's defaults but forces
-     * {@code moving=true} and {@code fovMode=CONE}.
+     * Build a {@link SensorGenerator.Config} for the auto-start cascade,
+     * preferring the transmitter's persisted per-row config when present.
+     *
+     * <p>This is the entry point the {@code TransmittersPane} auto-start
+     * flow calls. If the operator has customised the sensor config for
+     * this transmitter (via the Start Sensor Generator dialog, whose OK
+     * button stashes the resulting config back onto the row), those values
+     * win. Otherwise, the built-in demo defaults apply. Fixes Marty
+     * 2026-08-06 09:59 UTC — Auto-Start now honours edits.
+     *
+     * @param row transmitter row — provides both the current {@code nodeId}
+     *            (in case the operator regenerated the UUID) and the
+     *            persisted {@code lastSensorCfg}.
+     */
+    public static SensorGenerator.Config sensorConfig(TransmittersPane.TxRow row) {
+        if (row != null && row.lastSensorCfg != null) {
+            return row.lastSensorCfg.toConfig(row.nodeId);
+        }
+        String nodeId = row == null ? "" : row.nodeId;
+        return sensorConfig(nodeId);
+    }
+
+    /**
+     * Legacy nodeId-only overload. Returns the hard-coded demo defaults
+     * with the given nodeId stamped in. Preserved for the existing unit
+     * tests and for the {@link #sensorConfig(TransmittersPane.TxRow)}
+     * fallback path when no persisted config exists.
      */
     public static SensorGenerator.Config sensorConfig(String nodeId) {
         return new SensorGenerator.Config(
@@ -67,9 +93,22 @@ public final class AutoStartRecipe {
     }
 
     /**
-     * Build a {@link DetectionGenerator.Config} suitable for the auto-start
-     * cascade. Mirrors the detection generator dialog's defaults but forces
-     * {@code radiusMeters=20000} and {@code classification="drone"}.
+     * Build a {@link DetectionGenerator.Config} for the auto-start cascade,
+     * preferring the transmitter's persisted per-row config when present.
+     * Sibling of {@link #sensorConfig(TransmittersPane.TxRow)} — same
+     * contract, same fix context.
+     */
+    public static DetectionGenerator.Config detectionConfig(TransmittersPane.TxRow row) {
+        if (row != null && row.lastDetectionCfg != null) {
+            return row.lastDetectionCfg.toConfig(row.nodeId);
+        }
+        String nodeId = row == null ? "" : row.nodeId;
+        return detectionConfig(nodeId);
+    }
+
+    /**
+     * Legacy nodeId-only overload. See
+     * {@link #sensorConfig(String)} for the fallback contract.
      */
     public static DetectionGenerator.Config detectionConfig(String nodeId) {
         return new DetectionGenerator.Config(

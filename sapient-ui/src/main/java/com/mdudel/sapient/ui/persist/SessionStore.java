@@ -97,8 +97,17 @@ public final class SessionStore {
 
     /**
      * POJO: a saved transmitter (name + host + port + stable node_id, plus
-     * handshake-enforcement flag). See {@link SavedReceiver} for the
-     * back-compat notes on the enforcement field.
+     * handshake-enforcement flag and per-transmitter sensor + detection
+     * generator configs). See {@link SavedReceiver} for the back-compat notes
+     * on the enforcement field.
+     *
+     * <p>{@code sensorConfig} / {@code detectionConfig} carry the operator's
+     * last-used settings from the Start Sensor / Start Detection dialogs
+     * (and any future Edit-Sensor-Config path). {@code null} means "never
+     * customised — use hard-coded defaults", giving byte-identical behaviour
+     * to pre-persistence sessions. When populated, both Auto-Start and the
+     * Start Sensor / Start Detection dialogs pre-populate from these values
+     * so an edit sticks across runs (Marty 2026-08-06 09:59 UTC).
      */
     public static final class SavedTransmitter {
         public String name;
@@ -108,17 +117,29 @@ public final class SessionStore {
         public String nodeId;
         /** BSI Flex 335 v2.0 handshake enforcement toggle (default false = legacy dumb mode). */
         public boolean enforceHandshake;
+        /** Persisted sensor-generator config; {@code null} = use defaults. */
+        public SavedSensorConfig sensorConfig;
+        /** Persisted detection-generator config; {@code null} = use defaults. */
+        public SavedDetectionConfig detectionConfig;
 
         public SavedTransmitter() {}
         public SavedTransmitter(String name, String host, int port, String nodeId) {
-            this(name, host, port, nodeId, false);
+            this(name, host, port, nodeId, false, null, null);
         }
         public SavedTransmitter(String name, String host, int port, String nodeId, boolean enforceHandshake) {
+            this(name, host, port, nodeId, enforceHandshake, null, null);
+        }
+        public SavedTransmitter(String name, String host, int port, String nodeId,
+                                boolean enforceHandshake,
+                                SavedSensorConfig sensorConfig,
+                                SavedDetectionConfig detectionConfig) {
             this.name = name;
             this.host = host;
             this.port = port;
             this.nodeId = nodeId;
             this.enforceHandshake = enforceHandshake;
+            this.sensorConfig = sensorConfig;
+            this.detectionConfig = detectionConfig;
         }
     }
 

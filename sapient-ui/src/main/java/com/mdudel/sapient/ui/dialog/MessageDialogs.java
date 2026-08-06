@@ -8,6 +8,8 @@ import com.mdudel.sapient.core.factory.MessageFactory;
 import com.mdudel.sapient.core.gen.DetectionGenerator;
 import com.mdudel.sapient.core.gen.SensorGenerator;
 import com.mdudel.sapient.core.gen.SensorGeometry;
+import com.mdudel.sapient.ui.persist.SavedDetectionConfig;
+import com.mdudel.sapient.ui.persist.SavedSensorConfig;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.LocationList;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.LocationOrRangeBearing;
 import uk.gov.dstl.sapientmsg.bsiflex335v2.RangeBearingCone;
@@ -355,24 +357,38 @@ public final class MessageDialogs {
      * dialogs: detections are a scheduled activity.
      */
     public static Optional<DetectionGenerator.Config> detectionGenerator(String nodeId) {
+        return detectionGenerator(nodeId, null);
+    }
+
+    /**
+     * Seedable overload for the detection-generator dialog. When {@code seed}
+     * is non-null, every field is pre-populated from the persisted values so
+     * an edit sticks across runs. When {@code seed} is null the built-in
+     * defaults are used, giving byte-identical behaviour to the single-arg
+     * overload. Added 2026-08-06 for the per-transmitter persistence work.
+     */
+    public static Optional<DetectionGenerator.Config> detectionGenerator(
+            String nodeId, SavedDetectionConfig seed) {
         Dialog<DetectionGenerator.Config> d = base("Start Detection Generator");
         GridPane g = Forms.grid();
 
         TextField nodeIdField = new TextField(nodeId);
-        Spinner<Integer> countSpinner = intSpinner(1, 200, 5);
-        TextField latField = new TextField(String.valueOf(DEFAULT_LAT));
-        TextField lonField = new TextField(String.valueOf(DEFAULT_LON));
-        Spinner<Integer> radiusSpinner = intSpinner(10, 100_000, 500);
-        Spinner<Integer> rateSpinner = intSpinner(50, 60_000, 1000);
+        Spinner<Integer> countSpinner = intSpinner(1, 200, seedInt(seed == null ? null : seed.trackCount, 5));
+        TextField latField = new TextField(String.valueOf(seedDouble(seed == null ? null : seed.centerLat, DEFAULT_LAT)));
+        TextField lonField = new TextField(String.valueOf(seedDouble(seed == null ? null : seed.centerLon, DEFAULT_LON)));
+        Spinner<Integer> radiusSpinner = intSpinner(10, 100_000, seedInt(seed == null ? null : (seed.radiusMeters == null ? null : seed.radiusMeters.intValue()), 500));
+        Spinner<Integer> rateSpinner = intSpinner(50, 60_000, seedInt(seed == null ? null : (seed.tickMs == null ? null : seed.tickMs.intValue()), 1000));
         CheckBox movingBox = new CheckBox("Enable motion");
-        movingBox.setSelected(true);
-        Spinner<Double> speedSpinner = doubleSpinner(0.0, 500.0, 2.0, 0.5);
-        Spinner<Integer> turnJitterSpinner = intSpinner(0, 180, 15);
+        movingBox.setSelected(seedBool(seed == null ? null : seed.moving, true));
+        Spinner<Double> speedSpinner = doubleSpinner(0.0, 500.0, seedDouble(seed == null ? null : seed.speedMps, 2.0), 0.5);
+        Spinner<Integer> turnJitterSpinner = intSpinner(0, 180, seedInt(seed == null ? null : (seed.turnJitterDeg == null ? null : (int) Math.round(seed.turnJitterDeg)), 15));
         ComboBox<String> classCombo = new ComboBox<>(
                 javafx.collections.FXCollections.observableArrayList(STANDARD_CLASSIFICATIONS));
         classCombo.setEditable(true);
-        classCombo.setValue("person");
-        Spinner<Double> confSpinner = doubleSpinner(0.0, 1.0, 0.85, 0.05);
+        classCombo.setValue(seed != null && seed.classification != null && !seed.classification.isBlank()
+                ? seed.classification : "person");
+        Spinner<Double> confSpinner = doubleSpinner(0.0, 1.0,
+                seed != null && seed.confidence != null ? seed.confidence.doubleValue() : 0.85, 0.05);
         // Altitude / vertical motion (SAPIENT Location.z, metres, WGS84).
         // Defaults chosen for Wiesbaden: ground ≈ 110 m MSL, so 150 m base
         // with a ±50 m spread puts tracks 100–200 m above sea level (≈40–140 m
@@ -380,11 +396,11 @@ public final class MessageDialogs {
         // the operator dials wilder jitter; "floor above ground" defaults to
         // 100 m so a bare-defaults run mimics slow drones circling. Ceiling
         // 0 = unbounded above.
-        Spinner<Double> initAltSpinner = doubleSpinner(0.0, 20_000.0, 150.0, 10.0);
-        Spinner<Double> altJitterSpinner = doubleSpinner(0.0, 5_000.0, 50.0, 5.0);
-        Spinner<Double> vertRateSpinner = doubleSpinner(0.0, 100.0, 0.0, 0.5);
-        Spinner<Double> minAltSpinner = doubleSpinner(0.0, 20_000.0, 100.0, 10.0);
-        Spinner<Double> maxAltSpinner = doubleSpinner(0.0, 30_000.0, 0.0, 100.0);
+        Spinner<Double> initAltSpinner = doubleSpinner(0.0, 20_000.0, seedDouble(seed == null ? null : seed.initialAltitudeM, 150.0), 10.0);
+        Spinner<Double> altJitterSpinner = doubleSpinner(0.0, 5_000.0, seedDouble(seed == null ? null : seed.altitudeJitterM, 50.0), 5.0);
+        Spinner<Double> vertRateSpinner = doubleSpinner(0.0, 100.0, seedDouble(seed == null ? null : seed.verticalRateMps, 0.0), 0.5);
+        Spinner<Double> minAltSpinner = doubleSpinner(0.0, 20_000.0, seedDouble(seed == null ? null : seed.minAltitudeM, 100.0), 10.0);
+        Spinner<Double> maxAltSpinner = doubleSpinner(0.0, 30_000.0, seedDouble(seed == null ? null : seed.maxAltitudeM, 0.0), 100.0);
 
         int row = 0;
         Forms.addRow(g, row++, "node_id:", nodeIdField);
@@ -447,45 +463,77 @@ public final class MessageDialogs {
      * belt-and-braces defence against small monitors.
      */
     public static Optional<SensorGenerator.Config> sensorGenerator(String nodeId) {
+        return sensorGenerator(nodeId, null);
+    }
+
+    /**
+     * Seedable overload for the sensor-generator dialog. When {@code seed}
+     * is non-null, every field is pre-populated from the persisted values so
+     * an edit sticks across runs. When {@code seed} is null the built-in
+     * defaults are used, giving byte-identical behaviour to the single-arg
+     * overload. Added 2026-08-06 for the per-transmitter persistence work.
+     */
+    public static Optional<SensorGenerator.Config> sensorGenerator(
+            String nodeId, SavedSensorConfig seed) {
         Dialog<SensorGenerator.Config> d = base("Start Sensor Generator");
 
         // Identity + cadence
         TextField nodeIdField = new TextField(nodeId);
-        Spinner<Integer> tickSpinner = intSpinner(50, 60_000, 1000);
+        Spinner<Integer> tickSpinner = intSpinner(50, 60_000,
+                seedInt(seed == null ? null : (seed.tickMs == null ? null : seed.tickMs.intValue()), 1000));
 
         // Platform position
-        TextField latField = new TextField(String.valueOf(DEFAULT_LAT));
-        TextField lonField = new TextField(String.valueOf(DEFAULT_LON));
-        Spinner<Double> altSpinner = doubleSpinner(0.0, 20_000.0, 100.0, 10.0);
+        TextField latField = new TextField(String.valueOf(seedDouble(seed == null ? null : seed.centerLat, DEFAULT_LAT)));
+        TextField lonField = new TextField(String.valueOf(seedDouble(seed == null ? null : seed.centerLon, DEFAULT_LON)));
+        Spinner<Double> altSpinner = doubleSpinner(0.0, 20_000.0,
+                seedDouble(seed == null ? null : seed.centerAltM, 100.0), 10.0);
 
         // Motion
         CheckBox movingBox = new CheckBox("Moving platform");
-        movingBox.setSelected(false);
-        Spinner<Double> speedSpinner = doubleSpinner(0.0, 500.0, 5.0, 0.5);
-        Spinner<Integer> turnJitterSpinner = intSpinner(0, 180, 5);
-        Spinner<Integer> motionRadiusSpinner = intSpinner(10, 100_000, 2000);
+        movingBox.setSelected(seedBool(seed == null ? null : seed.moving, false));
+        Spinner<Double> speedSpinner = doubleSpinner(0.0, 500.0,
+                seedDouble(seed == null ? null : seed.speedMps, 5.0), 0.5);
+        Spinner<Integer> turnJitterSpinner = intSpinner(0, 180,
+                seedInt(seed == null ? null : (seed.turnJitterDeg == null ? null : (int) Math.round(seed.turnJitterDeg)), 5));
+        Spinner<Integer> motionRadiusSpinner = intSpinner(10, 100_000,
+                seedInt(seed == null ? null : (seed.motionRadiusMeters == null ? null : (int) Math.round(seed.motionRadiusMeters)), 2000));
 
         // FOV mode
         ChoiceBox<SensorGenerator.FovMode> fovModeBox = new ChoiceBox<>();
         fovModeBox.getItems().addAll(SensorGenerator.FovMode.values());
-        fovModeBox.setValue(SensorGenerator.FovMode.CONE);
+        SensorGenerator.FovMode fovSeed = SensorGenerator.FovMode.CONE;
+        if (seed != null && seed.fovMode != null) {
+            try { fovSeed = SensorGenerator.FovMode.valueOf(seed.fovMode); }
+            catch (IllegalArgumentException ignored) { /* fall back to CONE */ }
+        }
+        fovModeBox.setValue(fovSeed);
 
         // Cone / shared FOV geometry. Default: rotating radar dish at ~5 RPM
         // (30 deg/sec CW), 30 deg horizontal beam, 15 deg vertical beam,
         // 5000 m range, boresight elevation 5 deg (looking slightly upward
         // for airborne tracks), no elevation nod.
-        Spinner<Double> initAzSpinner = doubleSpinner(0.0, 360.0, 0.0, 5.0);
-        Spinner<Double> azRateSpinner = doubleSpinner(-360.0, 360.0, 30.0, 5.0);
-        Spinner<Double> initElSpinner = doubleSpinner(-90.0, 90.0, 5.0, 1.0);
-        Spinner<Double> elMinSpinner = doubleSpinner(-90.0, 90.0, 0.0, 1.0);
-        Spinner<Double> elMaxSpinner = doubleSpinner(-90.0, 90.0, 30.0, 1.0);
-        Spinner<Double> elRateSpinner = doubleSpinner(0.0, 90.0, 0.0, 1.0);
-        Spinner<Double> rangeSpinner = doubleSpinner(10.0, 200_000.0, 5000.0, 100.0);
-        Spinner<Double> hExtentSpinner = doubleSpinner(0.1, 360.0, 30.0, 1.0);
-        Spinner<Double> vExtentSpinner = doubleSpinner(0.1, 180.0, 15.0, 1.0);
+        Spinner<Double> initAzSpinner = doubleSpinner(0.0, 360.0,
+                seedDouble(seed == null ? null : seed.initialAzimuthDeg, 0.0), 5.0);
+        Spinner<Double> azRateSpinner = doubleSpinner(-360.0, 360.0,
+                seedDouble(seed == null ? null : seed.azimuthRateDegPerSec, 30.0), 5.0);
+        Spinner<Double> initElSpinner = doubleSpinner(-90.0, 90.0,
+                seedDouble(seed == null ? null : seed.initialElevationDeg, 5.0), 1.0);
+        Spinner<Double> elMinSpinner = doubleSpinner(-90.0, 90.0,
+                seedDouble(seed == null ? null : seed.elevationMinDeg, 0.0), 1.0);
+        Spinner<Double> elMaxSpinner = doubleSpinner(-90.0, 90.0,
+                seedDouble(seed == null ? null : seed.elevationMaxDeg, 30.0), 1.0);
+        Spinner<Double> elRateSpinner = doubleSpinner(0.0, 90.0,
+                seedDouble(seed == null ? null : seed.elevationRateDegPerSec, 0.0), 1.0);
+        Spinner<Double> rangeSpinner = doubleSpinner(10.0, 200_000.0,
+                seedDouble(seed == null ? null : seed.rangeMeters, 5000.0), 100.0);
+        Spinner<Double> hExtentSpinner = doubleSpinner(0.1, 360.0,
+                seedDouble(seed == null ? null : seed.horizontalExtentDeg, 30.0), 1.0);
+        Spinner<Double> vExtentSpinner = doubleSpinner(0.1, 180.0,
+                seedDouble(seed == null ? null : seed.verticalExtentDeg, 15.0), 1.0);
 
         // Polygon-only
-        Spinner<Integer> polyVertsSpinner = intSpinner(3, 24, 8);
+        Spinner<Integer> polyVertsSpinner = intSpinner(3, 24,
+                seedInt(seed == null ? null : seed.polygonVertexCount, 8));
 
         // Status housekeeping
         ChoiceBox<StatusReport.System> systemBox = new ChoiceBox<>();
@@ -493,10 +541,18 @@ public final class MessageDialogs {
             if (s == StatusReport.System.UNRECOGNIZED) continue;
             systemBox.getItems().add(s);
         }
-        systemBox.setValue(StatusReport.System.SYSTEM_OK);
-        TextField modeField = new TextField("scanning");
-        Spinner<Integer> batteryInitSpinner = intSpinner(0, 100, 100);
-        Spinner<Double> batteryDrainSpinner = doubleSpinner(0.0, 100.0, 0.0, 0.1);
+        StatusReport.System sysSeed = StatusReport.System.SYSTEM_OK;
+        if (seed != null && seed.system != null) {
+            try { sysSeed = StatusReport.System.valueOf(seed.system); }
+            catch (IllegalArgumentException ignored) { /* fall back to SYSTEM_OK */ }
+        }
+        systemBox.setValue(sysSeed);
+        TextField modeField = new TextField(seed != null && seed.mode != null && !seed.mode.isBlank()
+                ? seed.mode : "scanning");
+        Spinner<Integer> batteryInitSpinner = intSpinner(0, 100,
+                seedInt(seed == null ? null : seed.initialBatteryLevel, 100));
+        Spinner<Double> batteryDrainSpinner = doubleSpinner(0.0, 100.0,
+                seedDouble(seed == null ? null : seed.batteryDrainPerMin, 0.0), 0.1);
 
         // Section 1: Identity — the always-visible essentials.
         GridPane identityG = Forms.grid();
@@ -823,4 +879,15 @@ public final class MessageDialogs {
         try { return Double.parseDouble(text.trim()); }
         catch (NumberFormatException e) { return null; }
     }
+
+    // ---------- Seed helpers (per-transmitter persistence, 2026-08-06) ----------
+    //
+    // Trivial null-coalesce helpers so the seeded overloads of the sensor +
+    // detection dialogs stay readable. Placed alongside the intSpinner /
+    // doubleSpinner factories they feed. Package-private is fine — the two
+    // callers both live in this class.
+
+    private static int seedInt(Integer v, int def)         { return v == null ? def : v; }
+    private static double seedDouble(Double v, double def) { return v == null ? def : v; }
+    private static boolean seedBool(Boolean v, boolean def){ return v == null ? def : v; }
 }

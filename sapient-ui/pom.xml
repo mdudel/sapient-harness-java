@@ -27,6 +27,20 @@
             <groupId>com.mdudel.sapient</groupId>
             <artifactId>sapient-net</artifactId>
         </dependency>
+        <!--
+            protobuf-java at compile scope. sapient-core has it as a compile
+            dep, but Maven's reactor doesn't reliably surface sibling-module
+            transitive dependencies to sapient-ui's compile classpath from a
+            clean state (`mvn -o clean compile -pl sapient-ui -am` fails
+            without this). Sapient-ui code (TransmittersPane, AutoStartRecipe,
+            MessageDialogs, SavedSensorConfig, ...) references protobuf types
+            like SensorGenerator.Config's StatusReport.System enum. Declaring
+            it explicitly here is the offline-friendly fix. Added 2026-08-06.
+        -->
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-controls</artifactId>

@@ -57,15 +57,27 @@ public final class EditDialogs {
         public final int port;
         public final String nodeId;
         public final boolean enforceHandshake;
+        /**
+         * When true, the caller should drop this transmitter's persisted
+         * sensor + detection generator configs so the next dialog / Auto-Start
+         * falls back to the built-in defaults. Surfaced via the Reset
+         * checkbox in the transmitter edit dialog (2026-08-06).
+         */
+        public final boolean resetGeneratorConfigs;
         public TransmitterEdit(String name, String host, int port, String nodeId) {
-            this(name, host, port, nodeId, false);
+            this(name, host, port, nodeId, false, false);
         }
         public TransmitterEdit(String name, String host, int port, String nodeId, boolean enforceHandshake) {
+            this(name, host, port, nodeId, enforceHandshake, false);
+        }
+        public TransmitterEdit(String name, String host, int port, String nodeId,
+                               boolean enforceHandshake, boolean resetGeneratorConfigs) {
             this.name = name;
             this.host = host;
             this.port = port;
             this.nodeId = nodeId;
             this.enforceHandshake = enforceHandshake;
+            this.resetGeneratorConfigs = resetGeneratorConfigs;
         }
     }
 
@@ -118,15 +130,34 @@ public final class EditDialogs {
     }
 
     /**
+     * Back-compat overload without the "has saved configs" flag. Old callers
+     * (and tests) still work; the Reset row simply doesn't render.
+     */
+    public static Optional<TransmitterEdit> editTransmitter(
+            String currentName, String currentHost, int currentPort,
+            String currentNodeId, boolean currentEnforce, boolean live) {
+        return editTransmitter(currentName, currentHost, currentPort,
+                currentNodeId, currentEnforce, live, false);
+    }
+
+    /**
      * Prompt the user to edit an existing transmitter. All fields are
      * editable, including the SAPIENT node UUID (with a "Regenerate"
      * companion that mints a fresh v4 UUID on click — useful when the
      * operator wants the middleware to see this transmitter as a NEW
      * node on the next connect).
+     *
+     * <p>When {@code hasSavedGeneratorConfigs} is true, a "Reset sensor +
+     * detection configs" checkbox appears at the bottom. Ticking it and
+     * clicking OK tells the caller to drop the transmitter's persisted
+     * generator configs (so the next Auto-Start / Start Sensor / Start
+     * Detection dialog falls back to built-in defaults). When false the
+     * checkbox is suppressed so the dialog doesn't offer a no-op.
      */
     public static Optional<TransmitterEdit> editTransmitter(
             String currentName, String currentHost, int currentPort,
-            String currentNodeId, boolean currentEnforce, boolean live) {
+            String currentNodeId, boolean currentEnforce, boolean live,
+            boolean hasSavedGeneratorConfigs) {
 
         Dialog<TransmitterEdit> d = new Dialog<>();
         d.setTitle("Edit transmitter — " + currentName);
@@ -166,6 +197,19 @@ public final class EditDialogs {
         enforceHelp.setWrapText(true);
         enforceHelp.getStyleClass().add("text-muted");
 
+        // Reset sensor + detection configs. Only surfaced when the caller
+        // says there IS something to reset — otherwise it's a no-op button
+        // that just clutters the dialog. Ticked-and-OK signals the caller
+        // to drop row.lastSensorCfg + row.lastDetectionCfg on the swap.
+        CheckBox resetBox = new CheckBox("Reset sensor + detection configs to defaults");
+        resetBox.setSelected(false);
+        Label resetHelp = new Label("When ticked, this transmitter's saved sensor + detection "
+                + "generator settings (sensor location, FOV, sweep rate, track count, classification, "
+                + "altitude, etc.) are cleared. The next Start Sensor / Start Detection dialog and "
+                + "the next Auto-Start will fall back to built-in defaults.");
+        resetHelp.setWrapText(true);
+        resetHelp.getStyleClass().add("text-muted");
+
         GridPane g = Forms.grid();
         Forms.addRow(g, 0, "Name",     nameField);
         Forms.addRow(g, 1, "Host",     hostField);
@@ -174,6 +218,10 @@ public final class EditDialogs {
         g.add(nodeIdHelp, 1, 4);
         Forms.addRow(g, 5, "Mode", enforceBox);
         g.add(enforceHelp, 1, 6);
+        if (hasSavedGeneratorConfigs) {
+            Forms.addRow(g, 7, "Configs", resetBox);
+            g.add(resetHelp, 1, 8);
+        }
         d.getDialogPane().setContent(g);
 
         d.setResultConverter(bt -> {
@@ -184,7 +232,9 @@ public final class EditDialogs {
             int port = portSpinner.getValue() == null ? currentPort : portSpinner.getValue();
             String nodeId = nodeIdField.getText().trim();
             if (nodeId.isEmpty()) nodeId = UUID.randomUUID().toString();
-            return new TransmitterEdit(name, host, port, nodeId, enforceBox.isSelected());
+            boolean reset = hasSavedGeneratorConfigs && resetBox.isSelected();
+            return new TransmitterEdit(name, host, port, nodeId,
+                    enforceBox.isSelected(), reset);
         });
         return d.showAndWait().map(r -> r);
     }
